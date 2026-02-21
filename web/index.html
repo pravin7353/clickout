@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="ClickOut App">
+
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="ClickOut">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <title>ClickOut</title>
+  <link rel="manifest" href="manifest.json">
+
+  <style>
+    body {
+      background: linear-gradient(to bottom right, #EF5350, #C62828);
+      margin: 0;
+      height: 100vh;
+      width: 100vw;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-family: sans-serif;
+      color: white;
+      overflow: hidden;
+    }
+    .loader {
+      margin-top: 20px;
+      border: 3px solid rgba(255, 255, 255, 0.3);
+      border-radius: 50%;
+      border-top: 3px solid white;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <h1>ClickOut</h1>
+  <p style="opacity: 0.8; font-style: italic;">Why queue? Just click out!</p>
+  <div class="loader"></div>
+
+  <script src="main.dart.js" type="application/javascript"></script>
+
+</body>
+</html>
