@@ -322,8 +322,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                                   data['totalAmount'].toString()) ??
                               double.tryParse(data['gstTotal'].toString()) ??
                               0.0;
-
-                          // 🚦 SMART STATUS DISPLAY
+                          // 🚦 SMART STATUS DISPLAY (PINAKA UPDATED)
                           String payStatus =
                               (data['paymentStatus'] ?? 'PENDING')
                                   .toString()
@@ -340,18 +339,28 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                             displayStatus = "PAYMENT DUE";
                             displayColor = Colors.orange;
                             displayIcon = Icons.payment;
-                          } else if (exitStatus == 'COMPLETED') {
+                          } else if (exitStatus == 'COMPLETED' ||
+                              exitStatus == 'APPROVED') {
                             displayStatus = "COMPLETED";
                             displayColor = statusSuccess;
                             displayIcon = Icons.check_circle;
-                          } else if (payStatus == 'PAID') {
+                          }
+                          // 🚨 BUG FIX 1: DYNAMIC REJECTED LABEL
+                          else if (exitStatus == 'REJECTED') {
+                            displayStatus = "REJECTED & FIX";
+                            displayColor = Colors.red;
+                            displayIcon = Icons.error_outline;
+                          }
+                          // 🟢 Default to Paid only if not rejected
+                          else if (payStatus == 'PAID') {
                             displayStatus = "GATE PASS READY";
                             displayColor = Colors.blue;
                             displayIcon = Icons.qr_code;
                           }
 
                           // Soft deleted check visually
-                          if (data['status'] == 'DELETED') {
+                          if (data['status'] == 'DELETED' ||
+                              data['status'] == 'SUPERSEDED') {
                             displayStatus = "DELETED";
                             displayColor = statusDeleted;
                             displayIcon = Icons.delete;

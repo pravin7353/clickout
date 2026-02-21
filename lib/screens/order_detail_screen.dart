@@ -271,14 +271,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         Icons.verified, "YOU MAY EXIT", "Verification Complete", successGreen);
   }
 
-  // 🛡️ RECOVERY ENGINE UI: Guard Rejection Handler
+  // 🛡️ RECOVERY ENGINE UI: Guard Rejection Handler (PINAKA UPDATED)
   Widget _buildFailureUI(Map<String, dynamic> data, BuildContext context) {
+    // 🚨 BUG FIX 2: FETCH DYNAMIC GUARD REASON
+    String guardReason =
+        data['rejectReason'] ?? "Items mismatch detected by Guard.";
+
     return Column(
       children: [
         _buildStatusMessage(
             Icons.report_problem,
             "EXIT STOPPED",
-            "Items mismatch detected by Guard.\nPlease review your cart.",
+            "Reason: $guardReason\nPlease review your cart and fix the items.",
             alertRed),
         const SizedBox(height: 20),
         SizedBox(
@@ -290,19 +294,39 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 foregroundColor: Colors.white,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10))),
-            icon: Icon(Icons.shopping_cart, color: Colors.white),
+            icon: const Icon(Icons.shopping_cart, color: Colors.white),
             label: const Text("Fix & Re-Submit",
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             onPressed: () async {
-              // 🚀 ENGINE START: Switch to Correction Mode
-              final cart = Provider.of<CartService>(context, listen: false);
-              await cart.loadOrderForCorrection(widget.orderId, data['items']);
+              // 🚀 BUG FIX 3: THE GHOST ORDER KILLER!
+              // Purane failed order ko "SUPERSEDED" aur "isDeleted: true" mark karo
+              // Taaki wo admin audit mein rahe, par user ki history se gayab ho jaye!
+              try {
+                await FirebaseFirestore.instance
+                    .collection('orders')
+                    .doc(widget.orderId)
+                    .update({
+                  'exitStatus': 'RESOLVED_BY_USER',
+                  'status': 'SUPERSEDED',
+                  'isDeleted': true, // 🔥 MAGIC FLAG: Hides from Order History
+                  'resolvedAt': FieldValue.serverTimestamp(),
+                });
+              } catch (e) {
+                debugPrint("Ghost killer failed: $e");
+              }
 
+              // 🛒 ENGINE START: Switch to Correction Mode
               if (context.mounted) {
-                Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const CartScreen()),
-                    (route) => false);
+                final cart = Provider.of<CartService>(context, listen: false);
+                await cart.loadOrderForCorrection(
+                    widget.orderId, data['items']);
+
+                if (context.mounted) {
+                  Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (_) => const CartScreen()),
+                      (route) => false);
+                }
               }
             },
           ),
