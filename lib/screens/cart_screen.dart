@@ -177,15 +177,16 @@ class _CartScreenState extends State<CartScreen> {
                                       label: 'UNDO',
                                       textColor: Colors.yellow,
                                       onPressed: () {
-                                        // 🧠 SMART UNDO PHASE 1: Item ko wapas 1 quantity ke sath add karo
+                                        // 🧠 SMART UNDO PHASE 1
                                         cart.add(
                                           barcode: deletedItem.barcode,
                                           name: deletedItem.name,
-                                          price: deletedItem.price,
+                                          price: deletedItem
+                                              .originalPrice, // 🔥 FIX: .price ki jagah .originalPrice
                                           gst: deletedItem.gst,
                                           weight: deletedItem.weight,
                                         );
-                                        // 🔄 SMART UNDO PHASE 2: Bachi hui original quantity ko loop lagakar wapas laao!
+                                        // 🔄 SMART UNDO PHASE 2
                                         for (int i = 1;
                                             i < deletedItem.quantity;
                                             i++) {
@@ -260,8 +261,33 @@ class _CartScreenState extends State<CartScreen> {
         ),
         title: Text(item.name,
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        subtitle: Text("Rs ${item.price.toStringAsFixed(0)}",
-            style: TextStyle(color: primaryColor, fontWeight: FontWeight.bold)),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 🔥 FIX: .price ki jagah .originalPrice (Strike-through agar sale hai)
+            if (item.clearanceActive && item.clearanceType == 'PERCENT')
+              Text("₹${item.originalPrice.toStringAsFixed(2)}",
+                  style: const TextStyle(
+                      decoration: TextDecoration.lineThrough,
+                      color: Colors.grey,
+                      fontSize: 12)),
+            // 💰 Final Unit Price
+            Text("₹${item.finalUnitPrice.toStringAsFixed(2)}",
+                style: TextStyle(
+                    color: item.clearanceActive
+                        ? Colors.green.shade700
+                        : primaryColor,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14)),
+            // 🎁 BOGO Tag
+            if (item.clearanceType == 'BOGO')
+              Text("🎁 You get: ${item.effectiveQty} items",
+                  style: const TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12)),
+          ],
+        ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -322,7 +348,7 @@ class _CartScreenState extends State<CartScreen> {
             children: [
               const Text("Total Amount",
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              Text("Rs ${cart.grandTotal.toStringAsFixed(0)}",
+              Text("₹${cart.grandTotal.toStringAsFixed(0)}",
                   style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,

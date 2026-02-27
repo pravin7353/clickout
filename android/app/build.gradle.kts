@@ -31,7 +31,7 @@ android {
         // 🚨 KALI ENGINE (Scanner) UPGRADE: Set strictly to 23 🚨
         minSdk = flutter.minSdkVersion 
         
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 34
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }

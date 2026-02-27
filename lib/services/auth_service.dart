@@ -2,6 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart'; // 🚀 FCM IMPORT ADDED
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -31,7 +32,7 @@ class AuthService {
     }
   }
 
-  // 2. Verify OTP (Injected Session Logic)
+  // 2. Verify OTP (Injected Session & FCM Logic)
   Future<void> verifyOTP({
     required String verificationId,
     required String otp,
@@ -53,6 +54,14 @@ class AuthService {
         SharedPreferences prefs = await SharedPreferences.getInstance();
         await prefs.setString('localSessionId', sessionId);
 
+        // 🧠 FCM TOKEN HARVESTING (Chanakya Niti: Keep the intelligence network active)
+        String? fcmToken;
+        try {
+          fcmToken = await FirebaseMessaging.instance.getToken();
+        } catch (e) {
+          debugPrint("FCM Token fetch error: $e");
+        }
+
         // Save to Cloud (Firestore)
         await FirebaseFirestore.instance
             .collection('users')
@@ -61,8 +70,10 @@ class AuthService {
           'phone': userCred.user!.phoneNumber,
           'activeSessionId': sessionId,
           'lastLoginAt': FieldValue.serverTimestamp(),
-          'lastDeviceId':
-              'MobileApp', // You can expand this later using device_info_plus
+          'lastDeviceId': 'MobileApp',
+          // 👉 Save the token in an array so multiple devices can receive alerts
+          'fcmTokens':
+              fcmToken != null ? FieldValue.arrayUnion([fcmToken]) : [],
         }, SetOptions(merge: true));
       }
 
@@ -74,9 +85,9 @@ class AuthService {
 
   // 3. Sign Out
   Future<void> signOut() async {
+    // Optional Pro-Tip: Yahan logout hone par fcmTokens array se token remove bhi kar sakte hain future me.
     await _auth.signOut();
     SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs
-        .remove('localSessionId'); // Clear local session on intentional logout
+    await prefs.remove('localSessionId');
   }
 }

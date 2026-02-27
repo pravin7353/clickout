@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart'; // ✅ NEW IMPORT
+import 'package:provider/provider.dart';
 import '../services/pdf_invoice_service.dart';
-import '../services/cart_service.dart'; // ✅ NEW IMPORT
-import 'cart_screen.dart'; // ✅ NEW IMPORT
+import '../services/cart_service.dart';
+import 'cart_screen.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -20,6 +20,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   final Color cherryRedDark = const Color(0xFFC62828);
   final Color successGreen = const Color(0xFF2E7D32);
   final Color alertRed = const Color(0xFFD32F2F);
+  final Color expiredPurple = Colors.purpleAccent; // 👻 The Black Box Color
 
   final String? currentUserId = FirebaseAuth.instance.currentUser?.uid;
 
@@ -50,31 +51,43 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
           String orderStatus =
               (orderData['status'] ?? 'PENDING').toString().toUpperCase();
 
+          // 🕒 8-HOUR EXPIRY LOGIC ENGINE
+          DateTime? expiresAt =
+              (orderData['qrExpiresAt'] as Timestamp?)?.toDate();
+          bool isExpired =
+              expiresAt != null && DateTime.now().isAfter(expiresAt);
+          bool isCleanExit = (exitStatus == 'COMPLETED' ||
+              exitStatus == 'EXITED' ||
+              exitStatus == 'APPROVED');
+
           Widget content;
+
           if (orderStatus == 'DELETED' || orderStatus == 'CANCELLED') {
             content = _buildStatusMessage(Icons.delete_forever, "ORDER DELETED",
                 "This order is no longer valid.", Colors.grey);
-          } else if (orderStatus == 'EXPIRED') {
-            content = _buildStatusMessage(Icons.timer_off, "ORDER EXPIRED",
-                "Please create a new order.", Colors.orange);
+          }
+          // 🚨 THE TREMENDOUS 8-HOUR AUTO-KILL SWITCH
+          else if (!isCleanExit &&
+              (isExpired ||
+                  exitStatus == 'EXPIRED_BY_SYSTEM' ||
+                  orderStatus == 'EXPIRED')) {
+            content = _buildAutoKillUI();
+            exitStatus = 'EXPIRED'; // Force header update
           } else if (paymentStatus != 'PAID') {
             content = _buildUnpaidUI();
           } else if (exitStatus == 'PENDING' ||
               exitStatus == 'READY_FOR_EXIT') {
-            content = _buildGatePassUI(orderData);
+            content = _buildGatePassUI(orderData, expiresAt);
           }
-          // 🟢 100% GREEN SUCCESS CHECK: Agar Guard ne Approve kiya toh YAHAN aayega!
-          else if (exitStatus == 'COMPLETED' ||
-              exitStatus == 'EXITED' ||
-              exitStatus == 'APPROVED') {
+          // 🟢 100% GREEN SUCCESS CHECK
+          else if (isCleanExit) {
             content = _buildSuccessUI();
           }
-          // 🔴 100% RED FAILURE CHECK: Fix & Resubmit sirf tab aayega jab explicitly REJECTED ho!
+          // 🔴 100% RED FAILURE CHECK
           else if (exitStatus == 'REJECTED') {
             content = _buildFailureUI(orderData, context);
           } else {
-            // Fallback for any unknown status
-            content = _buildGatePassUI(orderData);
+            content = _buildGatePassUI(orderData, expiresAt);
           }
 
           return Stack(
@@ -143,7 +156,9 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                         ),
                       ),
                       const SizedBox(height: 20),
-                      if (paymentStatus == 'PAID' && orderStatus != 'DELETED')
+                      if (paymentStatus == 'PAID' &&
+                          orderStatus != 'DELETED' &&
+                          !isExpired)
                         SizedBox(
                             width: double.infinity,
                             height: 45,
@@ -194,17 +209,47 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
     ]);
   }
 
+  // 👻 THE EXPIRED UI
+  Widget _buildAutoKillUI() {
+    return Column(children: [
+      const Icon(Icons.timer_off, size: 80, color: Colors.purpleAccent),
+      const SizedBox(height: 10),
+      const Text("GATE PASS EXPIRED",
+          style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 22,
+              color: Colors.purpleAccent)),
+      const SizedBox(height: 15),
+      const Text(
+          "This gate pass was valid for 8 hours and has now expired. It has been secured in the Black Box.",
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey, height: 1.5)),
+      const SizedBox(height: 20),
+      SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10))),
+          onPressed: () {
+            Navigator.of(context).popUntil((route) => route.isFirst);
+          },
+          child: const Text("GO TO HOME",
+              style:
+                  TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        ),
+      )
+    ]);
+  }
+
   Widget _buildUnpaidUI() {
     return _buildStatusMessage(Icons.warning_amber_rounded, "PAYMENT PENDING",
         "Please pay at the cash counter to generate Gate Pass.", Colors.orange);
   }
 
-  Widget _buildGatePassUI(Map<String, dynamic> data) {
-    bool isExpired = false;
-    if (data['qrExpiresAt'] != null) {
-      DateTime expiresAt = (data['qrExpiresAt'] as Timestamp).toDate();
-      if (DateTime.now().isAfter(expiresAt)) isExpired = true;
-    }
+  Widget _buildGatePassUI(Map<String, dynamic> data, DateTime? expiresAt) {
     bool isConsumed = data['qrConsumed'] ?? false;
 
     if (isConsumed) {
@@ -224,44 +269,52 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                 fontSize: 22,
                 fontWeight: FontWeight.bold,
                 letterSpacing: 2)),
-        const SizedBox(height: 10),
-        Stack(alignment: Alignment.center, children: [
-          Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                  border: Border.all(
-                      color: isExpired ? Colors.red : Colors.blueAccent,
-                      width: 2),
-                  borderRadius: BorderRadius.circular(10)),
-              child: Opacity(
-                  opacity: isExpired ? 0.1 : 1.0,
-                  child: Image.network(
-                      "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${widget.orderId}",
-                      height: 150,
-                      width: 150))),
-          if (isExpired)
-            Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                color: Colors.red,
-                child: const Text("EXPIRED",
-                    style: TextStyle(
-                        color: Colors.white, fontWeight: FontWeight.bold)))
-        ]),
         const SizedBox(height: 15),
-        if (isExpired)
-          const Text("Valid time limit exceeded.",
-              style: TextStyle(color: Colors.red))
-        else
-          const Text("Show this at the exit gate.",
-              style: TextStyle(color: Colors.grey, fontSize: 12)),
+
+        // ⏳ 8-HOUR VALIDITY BANNER
+        if (expiresAt != null)
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.timer_outlined,
+                    color: Colors.orange, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  "Valid till: ${DateFormat('hh:mm a').format(expiresAt)}",
+                  style: const TextStyle(
+                      color: Colors.orange,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+
+        const SizedBox(height: 20),
+        Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+                border: Border.all(color: Colors.blueAccent, width: 2),
+                borderRadius: BorderRadius.circular(10)),
+            child: Image.network(
+                "https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${widget.orderId}",
+                height: 150,
+                width: 150)),
+        const SizedBox(height: 15),
+        const Text("Show this at the exit gate.",
+            style: TextStyle(color: Colors.grey, fontSize: 12)),
         const SizedBox(height: 10),
-        if (!isExpired) ...[
-          const LinearProgressIndicator(
-              color: Colors.blueAccent, backgroundColor: Colors.white),
-          Text(waitingText,
-              style: const TextStyle(color: Colors.blueAccent, fontSize: 10))
-        ],
+        const LinearProgressIndicator(
+            color: Colors.blueAccent, backgroundColor: Colors.white),
+        Text(waitingText,
+            style: const TextStyle(color: Colors.blueAccent, fontSize: 10)),
       ],
     );
   }
@@ -271,9 +324,7 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
         Icons.verified, "YOU MAY EXIT", "Verification Complete", successGreen);
   }
 
-  // 🛡️ RECOVERY ENGINE UI: Guard Rejection Handler (PINAKA UPDATED)
   Widget _buildFailureUI(Map<String, dynamic> data, BuildContext context) {
-    // 🚨 BUG FIX 2: FETCH DYNAMIC GUARD REASON
     String guardReason =
         data['rejectReason'] ?? "Items mismatch detected by Guard.";
 
@@ -298,9 +349,6 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
             label: const Text("Fix & Re-Submit",
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             onPressed: () async {
-              // 🚀 BUG FIX 3: THE GHOST ORDER KILLER!
-              // Purane failed order ko "SUPERSEDED" aur "isDeleted: true" mark karo
-              // Taaki wo admin audit mein rahe, par user ki history se gayab ho jaye!
               try {
                 await FirebaseFirestore.instance
                     .collection('orders')
@@ -308,14 +356,13 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     .update({
                   'exitStatus': 'RESOLVED_BY_USER',
                   'status': 'SUPERSEDED',
-                  'isDeleted': true, // 🔥 MAGIC FLAG: Hides from Order History
+                  'isDeleted': true,
                   'resolvedAt': FieldValue.serverTimestamp(),
                 });
               } catch (e) {
                 debugPrint("Ghost killer failed: $e");
               }
 
-              // 🛒 ENGINE START: Switch to Correction Mode
               if (context.mounted) {
                 final cart = Provider.of<CartService>(context, listen: false);
                 await cart.loadOrderForCorrection(
@@ -337,10 +384,12 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
 
   Widget _buildHeaderBackground(String status) {
     List<Color> colors;
-    if (status == 'COMPLETED' || status == 'EXITED') {
+    if (status == 'COMPLETED' || status == 'EXITED' || status == 'APPROVED') {
       colors = [successGreen, Colors.greenAccent];
     } else if (status == 'REJECTED') {
       colors = [alertRed, Colors.redAccent];
+    } else if (status == 'EXPIRED') {
+      colors = [expiredPurple, Colors.deepPurple];
     } else {
       colors = [cherryRedLight, cherryRedDark];
     }
@@ -358,18 +407,24 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
   }
 
   Widget _buildStatusIcon(String status) {
-    if (status == 'COMPLETED' || status == 'EXITED') {
+    if (status == 'COMPLETED' || status == 'EXITED' || status == 'APPROVED') {
       return const Icon(Icons.check_circle, color: Colors.white, size: 60);
     }
     if (status == 'REJECTED') {
       return const Icon(Icons.cancel, color: Colors.white, size: 60);
     }
+    if (status == 'EXPIRED') {
+      return const Icon(Icons.auto_delete, color: Colors.white, size: 60);
+    }
     return const Icon(Icons.qr_code_scanner, color: Colors.white, size: 60);
   }
 
   String _getStatusTitle(String status) {
-    if (status == 'COMPLETED' || status == 'EXITED') return "Exit Approved";
+    if (status == 'COMPLETED' || status == 'EXITED' || status == 'APPROVED') {
+      return "Exit Approved";
+    }
     if (status == 'REJECTED') return "Verification Failed";
+    if (status == 'EXPIRED') return "Gate Pass Expired";
     return "Gate Pass";
   }
 

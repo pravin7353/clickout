@@ -49,9 +49,9 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
   String _getSortLabel() {
     switch (_currentSort) {
       case SortType.pendingFirst:
-        return "Pending First";
+        return "Action Required First";
       case SortType.completedFirst:
-        return "Completed First";
+        return "Cleared First";
       case SortType.amountAsc:
         return "Amount (Low to High)";
       case SortType.amountDesc:
@@ -65,41 +65,45 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text("Delete Order?",
-            style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Row(children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.red),
+          SizedBox(width: 10),
+          Text("Hide Order?", style: TextStyle(fontWeight: FontWeight.bold))
+        ]),
         content: const Text(
-            "This will remove the order from your history view.\n(It will remain in records for audit)."),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+            "This will remove the order from your Live History view.\n(Forensic records cannot be deleted)."),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx),
               child:
                   const Text("Cancel", style: TextStyle(color: Colors.grey))),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: cherryRedDark),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: cherryRedDark,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10))),
             onPressed: () async {
-              Navigator.pop(ctx); // Dialog band karo
+              Navigator.pop(ctx);
               try {
                 await FirebaseFirestore.instance
                     .collection('orders')
                     .doc(orderId)
                     .update({
-                  'status': 'DELETED',
                   'isDeleted': true,
                   'deletedAt': FieldValue.serverTimestamp(),
                 });
-
-                // ✅ FIX: Async gap check
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text("Order removed from history")));
+                    content: Text("Order hidden from Live History"),
+                    behavior: SnackBarBehavior.floating));
               } catch (e) {
                 if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content: Text("Error: $e"), backgroundColor: Colors.red));
               }
             },
-            child: const Text("Delete", style: TextStyle(color: Colors.white)),
+            child: const Text("Hide", style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -111,402 +115,504 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     final String? userId = FirebaseAuth.instance.currentUser?.uid;
     const Color cherryRedLight = Color(0xFFEF5350);
     const Color cherryRedDark = Color(0xFFC62828);
+    const Color bgGrey = Color(0xFFF4F6F8);
 
-    const Color statusPending = Color(0xFFFFA000);
-    const Color statusSuccess = Color(0xFF2E7D32);
-    // const Color statusRejected = Color(0xFFD32F2F); // Unused warning fix
-    const Color statusDeleted = Color(0xFF757575);
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F6F8),
-      body: Stack(
-        children: [
-          // HEADER
-          Container(
-            height: 240,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                  colors: [cherryRedLight, cherryRedDark],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight),
-              borderRadius: BorderRadius.only(
-                  bottomLeft: Radius.circular(30),
-                  bottomRight: Radius.circular(30)),
-            ),
-            child: SafeArea(
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 10),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        CircleAvatar(
-                          backgroundColor: Colors.black12,
-                          child: IconButton(
-                              icon: const Icon(Icons.arrow_back_ios_new,
-                                  color: Colors.white, size: 20),
-                              onPressed: () => Navigator.pop(context)),
-                        ),
-                        const Text("ClickOut",
-                            style: TextStyle(
-                                color: Colors.white70,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold)),
-                        Container(
-                          margin: const EdgeInsets.only(right: 10),
-                          decoration: BoxDecoration(
-                              color: Colors.white24,
-                              borderRadius: BorderRadius.circular(10)),
-                          child: IconButton(
-                              icon: const Icon(Icons.sort, color: Colors.white),
-                              onPressed: _cycleSort),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Text("Order History",
-                      style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 30,
-                          fontWeight: FontWeight.bold)),
-
-                  // ID Display
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: InkWell(
-                      onTap: () {
-                        if (userId != null) {
-                          Clipboard.setData(ClipboardData(text: userId));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text("User ID Copied!")));
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 5),
-                        decoration: BoxDecoration(
-                            color: Colors.black26,
-                            borderRadius: BorderRadius.circular(5)),
-                        child: Text("ID: ${userId ?? 'Guest'}",
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontFamily: 'monospace')),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: bgGrey,
+        body: Column(
+          children: [
+            Container(
+              decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                      colors: [cherryRedLight, cherryRedDark],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight),
+                  borderRadius: BorderRadius.only(
+                      bottomLeft: Radius.circular(35),
+                      bottomRight: Radius.circular(35)),
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.black26,
+                        blurRadius: 15,
+                        offset: Offset(0, 5))
+                  ]),
+              child: SafeArea(
+                bottom: false,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 15, vertical: 10),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          CircleAvatar(
+                              backgroundColor: Colors.white24,
+                              radius: 20,
+                              child: IconButton(
+                                  icon: const Icon(Icons.arrow_back_ios_new,
+                                      color: Colors.white, size: 18),
+                                  onPressed: () => Navigator.pop(context))),
+                          const Text("ClickOut VIP",
+                              style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 18,
+                                  letterSpacing: 1.2,
+                                  fontWeight: FontWeight.bold)),
+                          Container(
+                              decoration: BoxDecoration(
+                                  color: Colors.white24,
+                                  borderRadius: BorderRadius.circular(12)),
+                              child: IconButton(
+                                  icon: const Icon(Icons.sort,
+                                      color: Colors.white),
+                                  onPressed: _cycleSort)),
+                        ],
                       ),
                     ),
-                  ),
-
-                  Container(
-                    margin: const EdgeInsets.only(top: 5),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20)),
-                    child: Text("Sorted by: ${_getSortLabel()}",
-                        style: const TextStyle(
-                            color: cherryRedDark,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12)),
-                  )
-                ],
+                    const Text("My Activity",
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 28,
+                            letterSpacing: 0.5,
+                            fontWeight: FontWeight.w900)),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: InkWell(
+                        onTap: () {
+                          if (userId != null) {
+                            Clipboard.setData(ClipboardData(text: userId));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text("VIP ID Copied!")));
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(
+                              color: Colors.black26,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.white12)),
+                          child: Text("ID: ${userId ?? 'Guest'}",
+                              style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 10,
+                                  fontFamily: 'monospace')),
+                        ),
+                      ),
+                    ),
+                    const TabBar(
+                      indicatorColor: Colors.white,
+                      indicatorWeight: 4,
+                      labelColor: Colors.white,
+                      unselectedLabelColor: Colors.white54,
+                      labelStyle:
+                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      tabs: [
+                        Tab(text: "LIVE & HISTORY ⏱️"),
+                        Tab(text: "BLACK BOX ⬛")
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-
-          // LIST
-          Padding(
-            padding: const EdgeInsets.only(top: 220),
-            child: userId == null
-                ? const Center(child: Text("Please Login to view orders"))
-                : StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('orders')
-                        .where('userId', isEqualTo: userId)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(
-                            child: CircularProgressIndicator(
-                                color: cherryRedDark));
-                      }
-                      if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                        return Center(
-                            child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                              Icon(Icons.history,
-                                  size: 80, color: Colors.grey[300]),
-                              const SizedBox(height: 10),
-                              Text("No orders yet",
-                                  style: TextStyle(
-                                      color: Colors.grey[600], fontSize: 16))
-                            ]));
-                      }
-
-                      var orders = snapshot.data!.docs.where((doc) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        return data['isDeleted'] != true &&
-                            data['status'] != 'DELETED';
-                      }).toList();
-
-                      // SORTING LOGIC
-                      orders.sort((a, b) {
-                        final dataA = a.data() as Map<String, dynamic>;
-                        final dataB = b.data() as Map<String, dynamic>;
-                        Timestamp t1 = dataA['timestamp'] is Timestamp
-                            ? dataA['timestamp']
-                            : Timestamp.now();
-                        Timestamp t2 = dataB['timestamp'] is Timestamp
-                            ? dataB['timestamp']
-                            : Timestamp.now();
-                        String statusA =
-                            (dataA['paymentStatus'] ?? dataA['status'] ?? '')
-                                .toString()
-                                .toUpperCase();
-                        String statusB =
-                            (dataB['paymentStatus'] ?? dataB['status'] ?? '')
-                                .toString()
-                                .toUpperCase();
-                        double amtA = double.tryParse(
-                                dataA['totalAmount']?.toString() ?? '0') ??
-                            0;
-                        double amtB = double.tryParse(
-                                dataB['totalAmount']?.toString() ?? '0') ??
-                            0;
-
-                        bool isASuccess =
-                            statusA == 'PAID' || statusA == 'COMPLETED';
-                        bool isBSuccess =
-                            statusB == 'PAID' || statusB == 'COMPLETED';
-                        bool isAPending = statusA == 'PENDING';
-                        bool isBPending = statusB == 'PENDING';
-
-                        switch (_currentSort) {
-                          case SortType.pendingFirst:
-                            if (isAPending && !isBPending) return -1;
-                            if (!isAPending && isBPending) return 1;
-                            return t2.compareTo(t1);
-                          case SortType.completedFirst:
-                            if (isASuccess && !isBSuccess) return -1;
-                            if (!isASuccess && isBSuccess) return 1;
-                            return t2.compareTo(t1);
-                          case SortType.amountAsc:
-                            return amtA.compareTo(amtB);
-                          case SortType.amountDesc:
-                            return amtB.compareTo(amtA);
-                          case SortType.dateLatest:
-                            return t2.compareTo(t1);
+            Expanded(
+              child: userId == null
+                  ? const Center(child: Text("Please Login to view orders"))
+                  : StreamBuilder<QuerySnapshot>(
+                      stream: FirebaseFirestore.instance
+                          .collection('orders')
+                          .where('userId', isEqualTo: userId)
+                          .snapshots(),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState ==
+                            ConnectionState.waiting) {
+                          return Center(
+                              child: CircularProgressIndicator(
+                                  color: cherryRedDark));
                         }
-                      });
+                        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                          return _buildEmptyState();
+                        }
 
-                      return ListView.separated(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 20, vertical: 20),
-                        itemCount: orders.length,
-                        separatorBuilder: (ctx, i) =>
-                            const SizedBox(height: 15),
-                        itemBuilder: (context, index) {
-                          final doc = orders[index];
+                        final allOrders = snapshot.data!.docs;
+
+                        // 🟢 LAYER A: LIVE & HISTORY
+                        var liveOrders = allOrders.where((doc) {
                           final data = doc.data() as Map<String, dynamic>;
 
-                          DateTime date =
-                              (data['timestamp'] as Timestamp?)?.toDate() ??
-                                  DateTime.now();
-                          String formattedDate =
-                              DateFormat('dd MMM, hh:mm a').format(date);
-
-                          double totalAmount = double.tryParse(
-                                  data['totalAmount'].toString()) ??
-                              double.tryParse(data['gstTotal'].toString()) ??
-                              0.0;
-                          // 🚦 SMART STATUS DISPLAY (PINAKA UPDATED)
-                          String payStatus =
-                              (data['paymentStatus'] ?? 'PENDING')
-                                  .toString()
-                                  .toUpperCase();
-                          String exitStatus = (data['exitStatus'] ?? 'PENDING')
+                          String exitStatus = (data['exitStatus'] ?? '')
+                              .toString()
+                              .toUpperCase();
+                          String payStatus = (data['paymentStatus'] ?? '')
                               .toString()
                               .toUpperCase();
 
-                          String displayStatus = "PENDING";
-                          Color displayColor = statusPending;
-                          IconData displayIcon = Icons.hourglass_empty;
+                          DateTime? expiresAt =
+                              (data['qrExpiresAt'] as Timestamp?)?.toDate();
+                          bool isExpired = expiresAt != null &&
+                              DateTime.now().isAfter(expiresAt);
 
-                          if (payStatus == 'PENDING') {
-                            displayStatus = "PAYMENT DUE";
-                            displayColor = Colors.orange;
-                            displayIcon = Icons.payment;
-                          } else if (exitStatus == 'COMPLETED' ||
-                              exitStatus == 'APPROVED') {
-                            displayStatus = "COMPLETED";
-                            displayColor = statusSuccess;
-                            displayIcon = Icons.check_circle;
-                          }
-                          // 🚨 BUG FIX 1: DYNAMIC REJECTED LABEL
-                          else if (exitStatus == 'REJECTED') {
-                            displayStatus = "REJECTED & FIX";
-                            displayColor = Colors.red;
-                            displayIcon = Icons.error_outline;
-                          }
-                          // 🟢 Default to Paid only if not rejected
-                          else if (payStatus == 'PAID') {
-                            displayStatus = "GATE PASS READY";
-                            displayColor = Colors.blue;
-                            displayIcon = Icons.qr_code;
+                          bool isCleanExit = (exitStatus == 'COMPLETED' ||
+                              exitStatus == 'APPROVED' ||
+                              exitStatus == 'EXITED');
+
+                          // Is it actively being processed?
+                          bool isActivePending = (payStatus == 'PENDING' ||
+                                  exitStatus == 'PENDING' ||
+                                  exitStatus == 'READY_FOR_EXIT') &&
+                              !isExpired &&
+                              exitStatus != 'REJECTED';
+
+                          // 🚀 THE ULTIMATE FIX: Agar process CHALU hai, toh galti se bhi hide nahi hoga!
+                          if (data['isDeleted'] == true && !isActivePending) {
+                            return false;
                           }
 
-                          // Soft deleted check visually
-                          if (data['status'] == 'DELETED' ||
-                              data['status'] == 'SUPERSEDED') {
-                            displayStatus = "DELETED";
-                            displayColor = statusDeleted;
-                            displayIcon = Icons.delete;
+                          if (isCleanExit) return true; // Hamesha dikhega
+                          if (isExpired) {
+                            return false; // Expire ho gaya toh Live se hatao
                           }
 
-                          return GestureDetector(
-                            onTap: () {
-                              if (payStatus == 'PENDING') {
-                                Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) => PaymentQRScreen(
-                                            orderId: doc.id,
-                                            amount: totalAmount)));
-                              } else {
-                                Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                        builder: (_) => OrderDetailScreen(
-                                            orderId: doc.id)));
-                              }
-                            },
-                            child: Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(15),
-                                boxShadow: [
-                                  BoxShadow(
-                                      // ✅ FIX: withOpacity -> withValues (Yellow line gone)
-                                      color:
-                                          Colors.black.withValues(alpha: 0.05),
-                                      blurRadius: 10,
-                                      offset: const Offset(0, 4))
-                                ],
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    padding: const EdgeInsets.all(12),
-                                    decoration: BoxDecoration(
-                                        // ✅ FIX: withOpacity -> withValues
-                                        color:
-                                            displayColor.withValues(alpha: 0.1),
-                                        borderRadius:
-                                            BorderRadius.circular(12)),
-                                    child:
-                                        Icon(displayIcon, color: displayColor),
-                                  ),
-                                  const SizedBox(width: 15),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                            "₹${totalAmount.toStringAsFixed(2)}",
-                                            style: const TextStyle(
-                                                fontFamily: 'DejaVuSansMono',
-                                                fontSize: 18,
-                                                fontWeight: FontWeight.bold)),
-                                        const SizedBox(height: 4),
-                                        Text(formattedDate,
-                                            style: TextStyle(
-                                                color: Colors.grey[600],
-                                                fontSize: 12)),
-                                        const SizedBox(height: 6),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 3),
-                                          decoration: BoxDecoration(
-                                              // ✅ FIX: withOpacity -> withValues
-                                              color: displayColor.withValues(
-                                                  alpha: 0.1),
-                                              borderRadius:
-                                                  BorderRadius.circular(5)),
-                                          child: Text(displayStatus,
-                                              style: TextStyle(
-                                                  color: displayColor,
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.bold)),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  PopupMenuButton<String>(
-                                    icon: const Icon(Icons.more_vert,
-                                        color: Colors.grey),
-                                    onSelected: (value) {
-                                      if (value == 'delete') {
-                                        _confirmDeleteOrder(
-                                            doc.id, cherryRedDark);
-                                      }
-                                      if (value == 'view') {
-                                        if (payStatus == 'PENDING') {
-                                          Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      PaymentQRScreen(
-                                                          orderId: doc.id,
-                                                          amount:
-                                                              totalAmount)));
-                                        } else {
-                                          Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      OrderDetailScreen(
-                                                          orderId: doc.id)));
-                                        }
-                                      }
-                                    },
-                                    itemBuilder: (BuildContext context) =>
-                                        <PopupMenuEntry<String>>[
-                                      const PopupMenuItem<String>(
-                                          value: 'view',
-                                          child: Row(children: [
-                                            Icon(Icons.visibility,
-                                                size: 18, color: Colors.grey),
-                                            SizedBox(width: 8),
-                                            Text('View Details')
-                                          ])),
-                                      const PopupMenuItem<String>(
-                                          value: 'delete',
-                                          child: Row(children: [
-                                            Icon(Icons.delete_outline,
-                                                size: 18, color: Colors.red),
-                                            SizedBox(width: 8),
-                                            Text('Delete Order',
-                                                style: TextStyle(
-                                                    color: Colors.red))
-                                          ])),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-          ),
-        ],
+                          return true;
+                        }).toList();
+
+                        // 🔴 LAYER B: THE BLACK BOX
+                        var blackBoxOrders = allOrders.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          String exitStatus = (data['exitStatus'] ?? '')
+                              .toString()
+                              .toUpperCase();
+                          String payStatus = (data['paymentStatus'] ?? '')
+                              .toString()
+                              .toUpperCase();
+                          bool wasEverRejected =
+                              data['wasEverRejected'] == true;
+
+                          DateTime? expiresAt =
+                              (data['qrExpiresAt'] as Timestamp?)?.toDate();
+                          bool isExpired = expiresAt != null &&
+                              DateTime.now().isAfter(expiresAt);
+                          bool isCleanExit = (exitStatus == 'COMPLETED' ||
+                              exitStatus == 'APPROVED' ||
+                              exitStatus == 'EXITED');
+
+                          bool isActivePending = (payStatus == 'PENDING' ||
+                                  exitStatus == 'PENDING' ||
+                                  exitStatus == 'READY_FOR_EXIT') &&
+                              !isExpired &&
+                              exitStatus != 'REJECTED';
+
+                          if (isActivePending) {
+                            return false; // Hide active flows from Black Box
+                          }
+
+                          if (!isCleanExit && isExpired) {
+                            return true; // Abandoned logs
+                          }
+                          if (wasEverRejected) {
+                            return true; // Historical Reject logs
+                          }
+
+                          return false;
+                        }).toList();
+
+                        _sortList(liveOrders);
+                        _sortList(blackBoxOrders);
+
+                        return TabBarView(
+                          children: [
+                            _buildOrderList(liveOrders,
+                                isBlackBox: false,
+                                cherryRedDark: cherryRedDark),
+                            _buildOrderList(blackBoxOrders,
+                                isBlackBox: true, cherryRedDark: cherryRedDark),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  void _sortList(List<DocumentSnapshot> orders) {
+    orders.sort((a, b) {
+      final dataA = a.data() as Map<String, dynamic>;
+      final dataB = b.data() as Map<String, dynamic>;
+      Timestamp t1 = dataA['timestamp'] is Timestamp
+          ? dataA['timestamp']
+          : Timestamp.now();
+      Timestamp t2 = dataB['timestamp'] is Timestamp
+          ? dataB['timestamp']
+          : Timestamp.now();
+      String statusA = (dataA['paymentStatus'] ?? '').toString().toUpperCase();
+      String statusB = (dataB['paymentStatus'] ?? '').toString().toUpperCase();
+      double amtA =
+          double.tryParse(dataA['totalAmount']?.toString() ?? '0') ?? 0;
+      double amtB =
+          double.tryParse(dataB['totalAmount']?.toString() ?? '0') ?? 0;
+
+      bool isASuccess = statusA == 'PAID';
+      bool isBSuccess = statusB == 'PAID';
+      bool isAPending = statusA == 'PENDING';
+      bool isBPending = statusB == 'PENDING';
+
+      switch (_currentSort) {
+        case SortType.pendingFirst:
+          if (isAPending && !isBPending) return -1;
+          if (!isAPending && isBPending) return 1;
+          return t2.compareTo(t1);
+        case SortType.completedFirst:
+          if (isASuccess && !isBSuccess) return -1;
+          if (!isASuccess && isBSuccess) return 1;
+          return t2.compareTo(t1);
+        case SortType.amountAsc:
+          return amtA.compareTo(amtB);
+        case SortType.amountDesc:
+          return amtB.compareTo(amtA);
+        case SortType.dateLatest:
+          return t2.compareTo(t1);
+      }
+    });
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(Icons.receipt_long, size: 80, color: Colors.grey[300]),
+      const SizedBox(height: 15),
+      Text("No records found",
+          style: TextStyle(
+              color: Colors.grey[500],
+              fontSize: 18,
+              fontWeight: FontWeight.bold))
+    ]));
+  }
+
+  Widget _buildOrderList(List<DocumentSnapshot> orders,
+      {required bool isBlackBox, required Color cherryRedDark}) {
+    if (orders.isEmpty) {
+      return Center(
+          child: Text(
+              isBlackBox ? "Your Audit Trail is Clean! 🌟" : "No active orders",
+              style: const TextStyle(
+                  color: Colors.grey, fontWeight: FontWeight.bold)));
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      itemCount: orders.length,
+      itemBuilder: (context, index) {
+        final doc = orders[index];
+        final data = doc.data() as Map<String, dynamic>;
+
+        DateTime date =
+            (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+        String formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(date);
+        double totalAmount =
+            double.tryParse(data['totalAmount'].toString()) ?? 0.0;
+
+        String payStatus =
+            (data['paymentStatus'] ?? 'PENDING').toString().toUpperCase();
+        String exitStatus =
+            (data['exitStatus'] ?? 'PENDING').toString().toUpperCase();
+        String paymentMode =
+            (data['paymentMode'] ?? 'UNKNOWN').toString().toUpperCase();
+        bool wasEverRejected = data['wasEverRejected'] == true;
+
+        DateTime? expiresAt = (data['qrExpiresAt'] as Timestamp?)?.toDate();
+        bool isExpired = expiresAt != null && DateTime.now().isAfter(expiresAt);
+        bool isCleanExit = (exitStatus == 'COMPLETED' ||
+            exitStatus == 'APPROVED' ||
+            exitStatus == 'EXITED');
+
+        String displayStatus = "UNKNOWN";
+        Color displayColor = Colors.grey;
+        IconData displayIcon = Icons.help_outline;
+
+        if (!isCleanExit && isExpired) {
+          displayStatus = "EXPIRED (8 HOURS OVER) 👻";
+          displayColor = Colors.purpleAccent;
+          displayIcon = Icons.auto_delete;
+        } else if (exitStatus == 'REJECTED') {
+          displayStatus = "GUARD REJECTED (FIX REQUIRED) 🚫";
+          displayColor = Colors.red;
+          displayIcon = Icons.gpp_bad;
+        } else if (payStatus == 'PENDING') {
+          if (paymentMode == 'CASH') {
+            displayStatus = "PENDING AT CASH COUNTER ⏳";
+            displayColor = Colors.orange;
+            displayIcon = Icons.point_of_sale;
+          } else {
+            displayStatus = "PENDING UPI PAYMENT 📱";
+            displayColor = Colors.blueAccent;
+            displayIcon = Icons.qr_code_2;
+          }
+        } else if (payStatus == 'PAID' &&
+            (exitStatus == 'PENDING' || exitStatus == 'READY_FOR_EXIT')) {
+          displayStatus = "PENDING AT GATE PASS 🛡️";
+          displayColor = Colors.blue;
+          displayIcon = Icons.qr_code_scanner;
+        } else if (isCleanExit) {
+          if (wasEverRejected) {
+            displayStatus = "FIXED & EXITED 🔧";
+            displayColor = Colors.teal;
+            displayIcon = Icons.build_circle;
+          } else {
+            displayStatus = "CLEAR EXIT ✅";
+            displayColor = Colors.green;
+            displayIcon = Icons.check_circle;
+          }
+        }
+
+        void handleTap() {
+          if (payStatus == 'PENDING' &&
+              exitStatus != 'REJECTED' &&
+              !isExpired) {
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) =>
+                        PaymentQRScreen(orderId: doc.id, amount: totalAmount)));
+          } else {
+            Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (_) => OrderDetailScreen(orderId: doc.id)));
+          }
+        }
+
+        return GestureDetector(
+          onTap: handleTap,
+          child: Container(
+            margin: const EdgeInsets.only(bottom: 15),
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: isBlackBox ? const Color(0xFF1E1E1E) : Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                  color: isBlackBox
+                      ? Colors.redAccent.withValues(alpha: 0.3)
+                      : Colors.grey.withValues(alpha: 0.1)),
+              boxShadow: [
+                BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4))
+              ],
+            ),
+            child: Row(
+              children: [
+                Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                        color: displayColor.withValues(alpha: 0.15),
+                        shape: BoxShape.circle),
+                    child: Icon(displayIcon, color: displayColor, size: 28)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text("₹${totalAmount.toStringAsFixed(2)}",
+                          style: TextStyle(
+                              fontFamily: 'DejaVuSansMono',
+                              fontSize: 22,
+                              letterSpacing: -0.5,
+                              color: isBlackBox ? Colors.white : Colors.black87,
+                              fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 5),
+                      Text(formattedDate,
+                          style: TextStyle(
+                              color: isBlackBox
+                                  ? Colors.white54
+                                  : Colors.grey[500],
+                              fontWeight: FontWeight.w500,
+                              fontSize: 12)),
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                            color: displayColor.withValues(alpha: 0.1),
+                            border: Border.all(
+                                color: displayColor.withValues(alpha: 0.3)),
+                            borderRadius: BorderRadius.circular(6)),
+                        child: Text(displayStatus,
+                            style: TextStyle(
+                                color: displayColor,
+                                fontSize: 10,
+                                letterSpacing: 0.5,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                      if (isBlackBox && !isCleanExit && isExpired)
+                        const Padding(
+                            padding: EdgeInsets.only(top: 8.0),
+                            child: Text("⚠️ System: Abandoned after 8 hours",
+                                style: TextStyle(
+                                    color: Colors.purpleAccent,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold))),
+                      if (isBlackBox && data['revisionHistory'] != null)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 8.0),
+                            child: Text(
+                                "⚠️ AI Record: ${(data['revisionHistory'] as List).length} Attempt(s) Logged",
+                                style: const TextStyle(
+                                    color: Colors.orange,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold)))
+                    ],
+                  ),
+                ),
+                PopupMenuButton<String>(
+                  icon: Icon(Icons.more_vert,
+                      color: isBlackBox ? Colors.white54 : Colors.grey),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15)),
+                  onSelected: (value) {
+                    if (value == 'delete' && !isBlackBox) {
+                      _confirmDeleteOrder(doc.id, cherryRedDark);
+                    }
+                    if (value == 'view') handleTap();
+                  },
+                  itemBuilder: (BuildContext context) =>
+                      <PopupMenuEntry<String>>[
+                    const PopupMenuItem<String>(
+                        value: 'view',
+                        child: Row(children: [
+                          Icon(Icons.visibility,
+                              size: 20, color: Colors.blueAccent),
+                          SizedBox(width: 10),
+                          Text('View Details',
+                              style: TextStyle(fontWeight: FontWeight.bold))
+                        ])),
+                    if (!isBlackBox)
+                      const PopupMenuItem<String>(
+                          value: 'delete',
+                          child: Row(children: [
+                            Icon(Icons.delete_outline,
+                                size: 20, color: Colors.red),
+                            SizedBox(width: 10),
+                            Text('Hide from History',
+                                style: TextStyle(
+                                    color: Colors.red,
+                                    fontWeight: FontWeight.bold))
+                          ])),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }

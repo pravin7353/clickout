@@ -47,18 +47,13 @@ class ProfileScreen extends StatelessWidget {
                       children: [
                         const Padding(
                           padding: EdgeInsets.only(top: 10, bottom: 20),
-                          child: Text(
-                            "My Profile",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontFamily: 'DejaVuSansMono',
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          child: Text("My Profile",
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontFamily: 'DejaVuSansMono',
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold)),
                         ),
-
-                        // User Info Stream
                         StreamBuilder<DocumentSnapshot>(
                           stream: FirebaseFirestore.instance
                               .collection('users')
@@ -69,11 +64,37 @@ class ProfileScreen extends StatelessWidget {
                                 snapshot.data?.data() as Map<String, dynamic>?;
                             final name = data?['name'] ?? 'ClickOut User';
                             final phone = user?.phoneNumber ?? '';
-                            // ✅ FIX: Extract email from Firestore Stream
                             final email = data?['email'] ??
                                 user?.email ??
                                 'No email added';
-                            final trustScore = data?['trustScore'] ?? 100;
+
+                            // 🧠 THE MIRROR: Extract Trust Score Intelligence
+                            double trustScore =
+                                (data?['trustScore'] as num?)?.toDouble() ??
+                                    80.0;
+
+                            String tierName = "Standard Citizen";
+                            Color tierColor = Colors.blueAccent;
+                            IconData tierIcon = Icons.check_circle_outline;
+
+                            if (trustScore >= 90) {
+                              tierName = "VIP - Green Channel";
+                              tierColor = Colors.greenAccent;
+                              tierIcon = Icons.verified_user;
+                            } else if (trustScore >= 60) {
+                              tierName = "Standard Citizen";
+                              tierColor =
+                                  Colors.white; // Looks best on red background
+                              tierIcon = Icons.shield;
+                            } else if (trustScore >= 30) {
+                              tierName = "Watchlist (Strict Check)";
+                              tierColor = Colors.orangeAccent;
+                              tierIcon = Icons.warning_amber_rounded;
+                            } else {
+                              tierName = "Blacklisted";
+                              tierColor = Colors.black87;
+                              tierIcon = Icons.gpp_bad;
+                            }
 
                             return Column(
                               children: [
@@ -81,14 +102,13 @@ class ProfileScreen extends StatelessWidget {
                                   radius: 40,
                                   backgroundColor: Colors.white,
                                   child: Text(
-                                    name.isNotEmpty
-                                        ? name[0].toUpperCase()
-                                        : "U",
-                                    style: TextStyle(
-                                        fontSize: 30,
-                                        color: cherryRedDark,
-                                        fontWeight: FontWeight.bold),
-                                  ),
+                                      name.isNotEmpty
+                                          ? name[0].toUpperCase()
+                                          : "U",
+                                      style: TextStyle(
+                                          fontSize: 30,
+                                          color: cherryRedDark,
+                                          fontWeight: FontWeight.bold)),
                                 ),
                                 const SizedBox(height: 10),
                                 Text(name,
@@ -100,30 +120,46 @@ class ProfileScreen extends StatelessWidget {
                                 Text(phone,
                                     style:
                                         const TextStyle(color: Colors.white70)),
-
-                                // ✅ FIX: Added the missing Email UI Display
                                 Text(email,
                                     style: const TextStyle(
                                         color: Colors.white70, fontSize: 12)),
 
                                 const SizedBox(height: 15),
+                                // 🛡️ DYNAMIC TRUST SCORE BADGE
                                 Container(
                                   padding: const EdgeInsets.symmetric(
                                       horizontal: 15, vertical: 8),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withOpacity(0.2),
+                                    color: Colors.black.withValues(
+                                        alpha: 0.2), // Fixed warning
                                     borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                        color:
+                                            tierColor.withValues(alpha: 0.5)),
                                   ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
+                                  child: Column(
                                     children: [
-                                      const Icon(Icons.shield,
-                                          color: Colors.white, size: 18),
-                                      const SizedBox(width: 8),
-                                      Text("Trust Score: $trustScore",
-                                          style: const TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold)),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(tierIcon,
+                                              color: tierColor, size: 18),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                              "Trust Score: ${trustScore.toStringAsFixed(0)}/100",
+                                              style: TextStyle(
+                                                  color: tierColor,
+                                                  fontWeight: FontWeight.bold)),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(tierName,
+                                          style: TextStyle(
+                                              color: tierColor.withValues(
+                                                  alpha: 0.8),
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              letterSpacing: 1.0)),
                                     ],
                                   ),
                                 ),
@@ -135,10 +171,7 @@ class ProfileScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 20),
-
-                // MENU OPTIONS
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Column(
@@ -152,7 +185,6 @@ class ProfileScreen extends StatelessWidget {
                               context,
                               MaterialPageRoute(
                                   builder: (_) => const EditProfileScreen()))),
-
                       _menuItem(
                           context,
                           Icons.history,
@@ -161,7 +193,6 @@ class ProfileScreen extends StatelessWidget {
                               context,
                               MaterialPageRoute(
                                   builder: (_) => const OrderHistoryScreen()))),
-
                       const SizedBox(height: 10),
                       _sectionTitle("Trust & Safety"),
                       _menuItem(
@@ -172,25 +203,21 @@ class ProfileScreen extends StatelessWidget {
                               context,
                               MaterialPageRoute(
                                   builder: (_) => const TrustScoreScreen()))),
-
                       const SizedBox(height: 10),
                       _sectionTitle("General"),
                       _menuItem(
                           context, Icons.notifications, "Notifications", () {}),
                       _menuItem(context, Icons.help, "Help & Support",
                           () => _showSupportOptions(context)),
-
                       const SizedBox(height: 20),
-
-                      // LOGOUT BUTTON
                       SizedBox(
                         width: double.infinity,
                         child: OutlinedButton(
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: cherryRedDark,
-                            side: BorderSide(color: cherryRedDark),
-                            padding: const EdgeInsets.symmetric(vertical: 15),
-                          ),
+                              foregroundColor: cherryRedDark,
+                              side: BorderSide(color: cherryRedDark),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 15)),
                           onPressed: () async {
                             await FirebaseAuth.instance.signOut();
                             Navigator.pushAndRemoveUntil(
@@ -225,11 +252,10 @@ class ProfileScreen extends StatelessWidget {
                           Navigator.pop(context);
                         } else {
                           Navigator.pushAndRemoveUntil(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => const HomeScreen()),
-                            (route) => false,
-                          );
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const HomeScreen()),
+                              (route) => false);
                         }
                       },
                     ),
@@ -248,8 +274,7 @@ class ProfileScreen extends StatelessWidget {
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (context) => Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -267,12 +292,11 @@ class ProfileScreen extends StatelessWidget {
             const SizedBox(height: 20),
             ListTile(
               leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                    color: Colors.green[50],
-                    borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.chat, color: Colors.green),
-              ),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                      color: Colors.green[50],
+                      borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.chat, color: Colors.green)),
               title: const Text("Chat on WhatsApp"),
               subtitle: const Text("Quickest response"),
               trailing: const Icon(Icons.arrow_forward_ios,
@@ -288,12 +312,11 @@ class ProfileScreen extends StatelessWidget {
             const Divider(),
             ListTile(
               leading: Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(10)),
-                child: const Icon(Icons.email, color: Colors.blue),
-              ),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.email, color: Colors.blue)),
               title: const Text("Email Us"),
               subtitle: const Text("For detailed queries"),
               trailing: const Icon(Icons.arrow_forward_ios,
@@ -319,24 +342,22 @@ class ProfileScreen extends StatelessWidget {
         throw 'Could not launch $uri';
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text("Could not open app: $e"),
-            backgroundColor: Colors.red),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text("Could not open app: $e"),
+          backgroundColor: Colors.red));
     }
   }
 
   Widget _sectionTitle(String title) {
     return Align(
-      alignment: Alignment.centerLeft,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 10, left: 10),
-        child: Text(title,
-            style: const TextStyle(
-                color: Colors.grey, fontWeight: FontWeight.bold, fontSize: 12)),
-      ),
-    );
+        alignment: Alignment.centerLeft,
+        child: Padding(
+            padding: const EdgeInsets.only(bottom: 10, left: 10),
+            child: Text(title,
+                style: const TextStyle(
+                    color: Colors.grey,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12))));
   }
 
   Widget _menuItem(
@@ -344,19 +365,17 @@ class ProfileScreen extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 5)
-        ],
-      ),
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 5)
+          ]),
       child: ListTile(
         leading: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-              color: Colors.red[50], borderRadius: BorderRadius.circular(8)),
-          child: Icon(icon, color: const Color(0xFFC62828)),
-        ),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+                color: Colors.red[50], borderRadius: BorderRadius.circular(8)),
+            child: Icon(icon, color: const Color(0xFFC62828))),
         title: Text(title,
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         trailing:

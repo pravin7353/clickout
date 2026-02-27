@@ -38,7 +38,7 @@ class CartService extends ChangeNotifier {
       } else {
         debugPrint("👋 User Logged Out -> Local Clear Only");
         _items = {};
-        _clearCorrectionState(); // 🛡️ Clear state on logout
+        _clearCorrectionState();
         notifyListeners();
       }
     });
@@ -55,17 +55,25 @@ class CartService extends ChangeNotifier {
 
     for (var item in previousItems) {
       String barcode = item['barcode'];
-      int qty = item['qty'] ?? item['quantity'] ?? 1;
+      int qty = int.tryParse(
+              item['qty']?.toString() ?? item['quantity']?.toString() ?? '1') ??
+          1;
+
+      // 🚀 THE FIX: Firebase se 'weight' aur 'weight_per_unit' dono check karo!
+      double itemWeight = double.tryParse(item['weight']?.toString() ?? '') ??
+          double.tryParse(item['weight_per_unit']?.toString() ?? '') ??
+          0.0;
 
       _items[barcode] = CartItem(
           barcode: barcode,
           name: item['name'],
-          price: double.tryParse(item['price'].toString()) ?? 0.0,
+          originalPrice:
+              double.tryParse(item['price'].toString()) ?? 0.0, // 🔥 FIXED
           gst: double.tryParse(item['gst'].toString()) ?? 0.0,
-          weight: double.tryParse(item['weight'].toString()) ?? 0.0,
+          weight: itemWeight,
           quantity: qty);
 
-      _correctionOriginalQty[barcode] = qty; // Original quantity save kar li
+      _correctionOriginalQty[barcode] = qty;
     }
 
     notifyListeners();
@@ -75,7 +83,7 @@ class CartService extends ChangeNotifier {
   void exitCorrectionMode() {
     debugPrint("✅ EXITING CORRECTION MODE");
     _clearCorrectionState();
-    clear(); // Cart saaf kar do
+    clear();
   }
 
   void _clearCorrectionState() {
@@ -98,7 +106,7 @@ class CartService extends ChangeNotifier {
       if (pendingOrderId == null) {
         debugPrint("🧹 No active pending orders. Wiping stale cart data.");
         _items = {};
-        _clearCorrectionState(); // 🛡️
+        _clearCorrectionState();
         await _clearStorage(uid);
       } else {
         debugPrint(
@@ -127,7 +135,6 @@ class CartService extends ChangeNotifier {
         final data = cloudSnap.data() as Map<String, dynamic>;
         List<dynamic> cloudItems = data['items'] ?? [];
 
-        // Load correction state from cloud if needed (optional, keeping it simple locally for now)
         _isCorrectionMode = data['isCorrectionMode'] ?? false;
         _correctionOrderId = data['correctionOrderId'];
 
@@ -177,7 +184,7 @@ class CartService extends ChangeNotifier {
     try {
       await _db.collection('carts').doc(user.uid).set({
         'items': saveableList,
-        'isCorrectionMode': _isCorrectionMode, // 🛡️ Save state to cloud
+        'isCorrectionMode': _isCorrectionMode,
         'correctionOrderId': _correctionOrderId,
         'correctionOriginalQty': _correctionOriginalQty,
         'lastUpdated': FieldValue.serverTimestamp(),
@@ -197,7 +204,6 @@ class CartService extends ChangeNotifier {
       required double weight,
       int stock = 999,
       int maxQtyPerOrder = 99}) {
-    // 🛡️ ANTI-FRAUD RULE: Block new items in correction mode
     if (_isCorrectionMode && !_items.containsKey(barcode)) {
       throw "Security Alert: You cannot add NEW items during Guard Correction Mode. Please remove/reduce items only.";
     }
@@ -209,7 +215,6 @@ class CartService extends ChangeNotifier {
       if (existing.quantity >= maxQtyPerOrder) throw "Max limit reached";
       if (existing.quantity >= stock) throw "Stock limit reached";
 
-      // 🛡️ ANTI-FRAUD RULE: Cap increment to original quantity
       if (_isCorrectionMode) {
         int maxAllowed = _correctionOriginalQty[barcode] ?? 0;
         if (existing.quantity >= maxAllowed) {
@@ -220,19 +225,24 @@ class CartService extends ChangeNotifier {
       _items.update(
           barcode,
           (existing) => CartItem(
-              barcode: existing.barcode,
-              name: existing.name,
-              price: existing.price,
-              gst: existing.gst,
-              weight: existing.weight,
-              quantity: existing.quantity + 1));
+                barcode: existing.barcode,
+                name: existing.name,
+                originalPrice: existing.originalPrice, // 🔥 FIXED
+                gst: existing.gst,
+                weight: existing.weight,
+                quantity: existing.quantity + 1,
+                clearanceActive:
+                    existing.clearanceActive, // 🔥 PRESERVED BOGO/OFFER
+                clearanceType: existing.clearanceType,
+                clearanceValue: existing.clearanceValue,
+              ));
     } else {
       _items.putIfAbsent(
           barcode,
           () => CartItem(
               barcode: barcode,
               name: name,
-              price: price,
+              originalPrice: price, // 🔥 FIXED
               gst: gst,
               weight: weight,
               quantity: 1));
@@ -243,26 +253,30 @@ class CartService extends ChangeNotifier {
 
   void increment(String barcode) {
     if (_items.containsKey(barcode)) {
-      // 🛡️ ANTI-FRAUD RULE: Cap increment to original quantity
       if (_isCorrectionMode) {
         int currentQty = _items[barcode]!.quantity;
         int maxAllowed = _correctionOriginalQty[barcode] ?? 0;
         if (currentQty >= maxAllowed) {
           debugPrint(
               "🛑 FRAUD PREVENTED: Blocked increment beyond original qty.");
-          return; // Fail silently or could throw
+          return;
         }
       }
 
       _items.update(
           barcode,
           (existing) => CartItem(
-              barcode: existing.barcode,
-              name: existing.name,
-              price: existing.price,
-              gst: existing.gst,
-              weight: existing.weight,
-              quantity: existing.quantity + 1));
+                barcode: existing.barcode,
+                name: existing.name,
+                originalPrice: existing.originalPrice, // 🔥 FIXED
+                gst: existing.gst,
+                weight: existing.weight,
+                quantity: existing.quantity + 1,
+                clearanceActive:
+                    existing.clearanceActive, // 🔥 PRESERVED BOGO/OFFER
+                clearanceType: existing.clearanceType,
+                clearanceValue: existing.clearanceValue,
+              ));
       notifyListeners();
       _saveCart();
     }
@@ -274,12 +288,17 @@ class CartService extends ChangeNotifier {
       _items.update(
           barcode,
           (existing) => CartItem(
-              barcode: existing.barcode,
-              name: existing.name,
-              price: existing.price,
-              gst: existing.gst,
-              weight: existing.weight,
-              quantity: existing.quantity - 1));
+                barcode: existing.barcode,
+                name: existing.name,
+                originalPrice: existing.originalPrice, // 🔥 FIXED
+                gst: existing.gst,
+                weight: existing.weight,
+                quantity: existing.quantity - 1,
+                clearanceActive:
+                    existing.clearanceActive, // 🔥 PRESERVED BOGO/OFFER
+                clearanceType: existing.clearanceType,
+                clearanceValue: existing.clearanceValue,
+              ));
     } else {
       _items.remove(barcode);
     }
@@ -295,7 +314,7 @@ class CartService extends ChangeNotifier {
 
   void clear() {
     _items = {};
-    _clearCorrectionState(); // 🛡️ Wipes correction state
+    _clearCorrectionState();
     notifyListeners();
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
@@ -311,24 +330,29 @@ class CartService extends ChangeNotifier {
 
   // --- Getters ---
   int get totalItems => _items.length;
+
+  // 🧠 SMART CALCULATION (Using Client Side Engine Math)
   double get grandTotal {
     double total = 0.0;
-    _items.forEach((key, item) => total += item.price * item.quantity);
+    _items.forEach(
+        (key, item) => total += item.totalPrice); // 🔥 USING SMART TOTAL
     return total;
   }
 
   double get totalGST {
     double total = 0.0;
     _items.forEach((key, item) {
-      double gstAmount = (item.price * item.gst) / 100;
-      total += gstAmount * item.quantity;
+      // GST is calculated on Final Discounted Price, for the Payable Quantity!
+      double gstAmount = (item.finalUnitPrice * item.gst) / 100;
+      total += gstAmount * item.payableQty;
     });
     return total;
   }
 
   double get totalWeight {
     double total = 0.0;
-    _items.forEach((key, item) => total += item.weight * item.quantity);
+    _items.forEach((key, item) =>
+        total += item.totalWeight); // 🔥 Uses BOGO doubled weight
     return total;
   }
 
@@ -353,7 +377,10 @@ class CartService extends ChangeNotifier {
         final data = doc.data() as Map<String, dynamic>;
         final double freshPrice =
             double.tryParse(data['price'].toString()) ?? 0.0;
-        final int liveStock = int.tryParse(data['stock'].toString()) ?? 0;
+        final int liveStock = int.tryParse(data['stock']?.toString() ??
+                data['physicalStock']?.toString() ??
+                '0') ??
+            0;
         CartItem currentItem = _items[barcode]!;
 
         if (liveStock == 0) {
@@ -362,17 +389,22 @@ class CartService extends ChangeNotifier {
           hasChanges = true;
         }
 
-        if ((currentItem.price - freshPrice).abs() > 0.01) {
+        if ((currentItem.originalPrice - freshPrice).abs() > 0.01) {
+          // 🔥 FIXED
           warnings.add("Price updated for ${data['name']}.");
           _items.update(
               barcode,
               (existing) => CartItem(
-                  barcode: existing.barcode,
-                  name: existing.name,
-                  price: freshPrice,
-                  gst: existing.gst,
-                  weight: existing.weight,
-                  quantity: existing.quantity));
+                    barcode: existing.barcode,
+                    name: existing.name,
+                    originalPrice: freshPrice, // 🔥 FIXED
+                    gst: existing.gst,
+                    weight: existing.weight,
+                    quantity: existing.quantity,
+                    clearanceActive: existing.clearanceActive,
+                    clearanceType: existing.clearanceType,
+                    clearanceValue: existing.clearanceValue,
+                  ));
           hasChanges = true;
         }
       }

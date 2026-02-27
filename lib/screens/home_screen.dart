@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // 🚀 F-22 RAPTOR IMPORT FOR SYSTEM EXIT
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -95,6 +96,45 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
+  // 🧱 THE GREAT WALL: EXIT CONFIRMATION DIALOG
+  Future<bool?> _showExitDialog() {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Icon(Icons.exit_to_app, color: cherryRedDark),
+            const SizedBox(width: 10),
+            const Text("Leaving so soon?",
+                style: TextStyle(fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: const Text(
+            "Are you sure you want to exit the ClickOut app? Tremendous deals are waiting!"),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("STAY",
+                style:
+                    TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: cherryRedDark,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("EXIT",
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> pages = [
@@ -103,77 +143,98 @@ class _HomeScreenState extends State<HomeScreen>
       const ProfileScreen()
     ];
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF4F6F8),
-      body: pages[_selectedIndex],
+    // 🛡️ POPSCOPE: BORDER CONTROL FOR THE BACK BUTTON
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (bool didPop, Object? result) async {
+        if (didPop) return;
 
-      // 🦶 BOTTOM BAR
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(20), topRight: Radius.circular(20)),
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 10,
-                offset: const Offset(0, -5))
-          ],
-        ),
-        child: BottomNavigationBar(
-          currentIndex: _selectedIndex,
-          onTap: _onItemTapped,
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          selectedItemColor: cherryRedDark,
-          unselectedItemColor: Colors.grey[400],
-          selectedLabelStyle:
-              const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-          type: BottomNavigationBarType.fixed,
-          items: [
-            const BottomNavigationBarItem(
-                icon: Icon(Icons.home_rounded, size: 28), label: 'Home'),
-            BottomNavigationBarItem(
-              icon: Consumer<CartService>(
-                builder: (context, cart, child) {
-                  return Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      const Icon(Icons.shopping_cart_rounded, size: 28),
-                      if (cart.totalItems > 0)
-                        Positioned(
-                          right: -5,
-                          top: -5,
-                          child: Container(
-                            padding: const EdgeInsets.all(4),
-                            decoration: const BoxDecoration(
-                              color: Colors.red,
-                              shape: BoxShape.circle,
-                            ),
-                            constraints: const BoxConstraints(
-                              minWidth: 18,
-                              minHeight: 18,
-                            ),
-                            child: Text(
-                              '${cart.totalItems}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
+        if (_selectedIndex != 0) {
+          // If in Cart or Profile, go back to Home first
+          setState(() {
+            _selectedIndex = 0;
+          });
+          return;
+        }
+
+        // If on Home, show the Wall Dialog
+        final bool shouldPop = await _showExitDialog() ?? false;
+        if (shouldPop) {
+          SystemNavigator.pop(); // Kills the app beautifully
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF4F6F8),
+        body: pages[_selectedIndex],
+
+        // 🦶 BOTTOM BAR
+        bottomNavigationBar: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(20), topRight: Radius.circular(20)),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.05),
+                  blurRadius: 10,
+                  offset: const Offset(0, -5))
+            ],
+          ),
+          child: BottomNavigationBar(
+            currentIndex: _selectedIndex,
+            onTap: _onItemTapped,
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            selectedItemColor: cherryRedDark,
+            unselectedItemColor: Colors.grey[400],
+            selectedLabelStyle:
+                const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+            type: BottomNavigationBarType.fixed,
+            items: [
+              const BottomNavigationBarItem(
+                  icon: Icon(Icons.home_rounded, size: 28), label: 'Home'),
+              BottomNavigationBarItem(
+                icon: Consumer<CartService>(
+                  builder: (context, cart, child) {
+                    return Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        const Icon(Icons.shopping_cart_rounded, size: 28),
+                        if (cart.totalItems > 0)
+                          Positioned(
+                            right: -5,
+                            top: -5,
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: const BoxDecoration(
+                                color: Colors.red,
+                                shape: BoxShape.circle,
                               ),
-                              textAlign: TextAlign.center,
+                              constraints: const BoxConstraints(
+                                minWidth: 18,
+                                minHeight: 18,
+                              ),
+                              child: Text(
+                                '${cart.totalItems}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
                             ),
                           ),
-                        ),
-                    ],
-                  );
-                },
+                      ],
+                    );
+                  },
+                ),
+                label: 'Cart',
               ),
-              label: 'Cart',
-            ),
-            const BottomNavigationBarItem(
-                icon: Icon(Icons.person_rounded, size: 28), label: 'Profile'),
-          ],
+              const BottomNavigationBarItem(
+                  icon: Icon(Icons.person_rounded, size: 28), label: 'Profile'),
+            ],
+          ),
         ),
       ),
     );
@@ -253,7 +314,7 @@ class _HomeScreenState extends State<HomeScreen>
                       },
                     ),
 
-                    // 🔍 SEARCH BUTTON WITH MESSAGE
+                    // 🔍 SEARCH BUTTON
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -263,7 +324,6 @@ class _HomeScreenState extends State<HomeScreen>
                               delegate: ProductSearchDelegate());
                         }),
                         const SizedBox(height: 5),
-                        // ✨ YEH HAI WO MESSAGE
                         GestureDetector(
                           onTap: () {
                             showSearch(

@@ -1,10 +1,9 @@
-import 'dart:async'; // ⏱️ Timer ke liye
+import 'dart:async';
 import 'package:clickout/screens/auth_wrapper.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:sms_autofill/sms_autofill.dart'; // 📨 Auto Read ke liye
-import '../services/auth_service.dart';
-//import 'home_screen.dart';
+import 'package:sms_autofill/sms_autofill.dart';
+import '../core/unified_auth_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -16,7 +15,6 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
   final phoneController = TextEditingController();
   final otpController = TextEditingController();
-  final authService = AuthService();
 
   // 🔥 Cherry Colors
   final Color cherryRedLight = const Color(0xFFEF5350);
@@ -28,18 +26,17 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
 
   // ⏱️ Resend Timer Logic
   Timer? _timer;
-  int _start = 30;
+  int _start = 60; // 🧠 Changed to 60s to match Unified Service cooldown
   bool _canResend = false;
 
   @override
   void initState() {
     super.initState();
-    listenForCode(); // 👂 SMS sunna shuru karo
+    listenForCode();
   }
 
   @override
   void codeUpdated() {
-    // 📨 Jab SMS aaye to apne aap OTP box me daal do
     setState(() {
       otpController.text = code ?? "";
     });
@@ -48,14 +45,13 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
   @override
   void dispose() {
     _timer?.cancel();
-    cancel(); // Stop listening for SMS
+    cancel();
     super.dispose();
   }
 
-  // ⏳ Timer Function
   void _startTimer() {
     setState(() {
-      _start = 30;
+      _start = 60;
       _canResend = false;
     });
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -65,45 +61,106 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
           _canResend = true;
         });
       } else {
-        setState(() {
-          _start--;
-        });
+        setState(() => _start--);
       }
     });
   }
 
-  // 🔄 Resend Logic
   void _resendOtp() async {
     if (!_canResend) return;
 
-    _startTimer(); // Timer reset
+    _startTimer();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Resending OTP...")),
     );
 
-    // Call Firebase Send OTP again
-    await authService.sendOTP(
+    await UnifiedAuthService.sendPhoneOtp(
       phone: '+91${phoneController.text}',
       onCodeSent: (verificationId) {
-        setState(() {
-          _verificationId = verificationId;
-        });
-        // Auto listener wapas start karo
+        setState(() => _verificationId = verificationId);
         listenForCode();
       },
-      onError: (error) {
-        _showError(error);
-      },
+      onError: (error) => _showError(error),
     );
   }
 
+  // ⚡ 🧠 UNIFIED LOGIC
+  void _handleButtonPress() async {
+    if (isOtpSent) {
+      // ---> VERIFY
+      if (otpController.text.length != 6) {
+        _showError('Please enter 6 digit OTP');
+        return;
+      }
+      setState(() => loading = true);
+
+      try {
+        await UnifiedAuthService.verifyOtpAndLogin(
+          verificationId: _verificationId!,
+          smsCode: otpController.text,
+          roleCollection: 'users',
+          initialData: {
+            'trustScore': 100,
+            'totalVisits': 0
+          }, // Auto-create data
+        );
+
+        setState(() => loading = false);
+        _timer?.cancel();
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const AuthWrapper()),
+            (route) => false,
+          );
+        }
+      } catch (e) {
+        setState(() => loading = false);
+        _showError(e.toString());
+      }
+    } else {
+      // ---> SEND OTP
+      if (phoneController.text.length != 10) {
+        _showError('Enter valid 10 digit number');
+        return;
+      }
+      setState(() => loading = true);
+
+      await UnifiedAuthService.sendPhoneOtp(
+        phone: '+91${phoneController.text}',
+        onCodeSent: (verificationId) {
+          setState(() {
+            loading = false;
+            isOtpSent = true;
+            _verificationId = verificationId;
+          });
+          _startTimer();
+          listenForCode();
+        },
+        onError: (error) {
+          setState(() => loading = false);
+          _showError(error);
+        },
+      );
+    }
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+          content:
+              Text(msg, style: const TextStyle(fontFamily: 'DejaVuSansMono')),
+          backgroundColor: Colors.black87),
+    );
+  }
+
+  // UI REMAINS EXACTLY THE SAME (Untouched)
   @override
   Widget build(BuildContext context) {
     SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light);
 
     return Scaffold(
       body: Container(
-        // 🍒 Red Gradient Background
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
@@ -118,7 +175,6 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // 1. BRANDING
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
@@ -134,9 +190,7 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
                     child: Icon(Icons.shopping_cart_rounded,
                         color: cherryRedDark, size: 50),
                   ),
-
                   const SizedBox(height: 20),
-
                   const Text(
                     'CLICKOUT',
                     style: TextStyle(
@@ -147,10 +201,7 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
                       letterSpacing: 2,
                     ),
                   ),
-
                   const SizedBox(height: 40),
-
-                  // 2. DYNAMIC TITLE
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
                     child: Text(
@@ -168,7 +219,6 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
                       ),
                     ),
                   ),
-
                   const SizedBox(height: 10),
                   Text(
                     isOtpSent
@@ -179,18 +229,12 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
                         color: Colors.white.withOpacity(0.8),
                         fontSize: 12),
                   ),
-
                   const SizedBox(height: 40),
-
-                  // 3. INPUT BOX (Phone / OTP)
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
                     child: isOtpSent ? _buildOtpInput() : _buildPhoneInput(),
                   ),
-
                   const SizedBox(height: 30),
-
-                  // 4. ACTION BUTTON
                   SizedBox(
                     width: double.infinity,
                     height: 56,
@@ -221,21 +265,18 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
                             ),
                     ),
                   ),
-
-                  // 5. BOTTOM OPTIONS (Change Number + Resend OTP)
                   if (isOtpSent)
                     Padding(
                       padding: const EdgeInsets.only(top: 25),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          // Change Number
                           TextButton(
                             onPressed: () {
                               setState(() {
                                 isOtpSent = false;
                                 otpController.clear();
-                                _timer?.cancel(); // Timer stop
+                                _timer?.cancel();
                               });
                             },
                             child: const Text(
@@ -246,15 +287,12 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
                                   decoration: TextDecoration.underline),
                             ),
                           ),
-
                           Container(
                               height: 15,
                               width: 1,
                               color: Colors.white30,
                               margin:
                                   const EdgeInsets.symmetric(horizontal: 10)),
-
-                          // Resend OTP
                           TextButton(
                             onPressed: _canResend ? _resendOtp : null,
                             child: Text(
@@ -279,7 +317,6 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
     );
   }
 
-  // 📞 UI: Phone Input
   Widget _buildPhoneInput() {
     return Container(
       key: const ValueKey('phone'),
@@ -304,7 +341,6 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
             child: TextField(
               controller: phoneController,
               keyboardType: TextInputType.phone,
-              // 🔥 Autofill Hint for Phone
               autofillHints: const [AutofillHints.telephoneNumber],
               style: const TextStyle(
                   fontFamily: 'DejaVuSansMono',
@@ -328,7 +364,6 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
     );
   }
 
-  // 🔢 UI: OTP Input (Updated for AutoFill)
   Widget _buildOtpInput() {
     return Container(
       key: const ValueKey('otp'),
@@ -342,7 +377,6 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
         controller: otpController,
         keyboardType: TextInputType.number,
         textAlign: TextAlign.center,
-        // 🔥 AUTOFILL HINTS (Production Standard)
         autofillHints: const [AutofillHints.oneTimeCode],
         style: const TextStyle(
             fontFamily: 'DejaVuSansMono',
@@ -359,70 +393,6 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
         ),
         maxLength: 6,
       ),
-    );
-  }
-
-  // ⚡ LOGIC
-  void _handleButtonPress() async {
-    if (isOtpSent) {
-      // ---> VERIFY
-      if (otpController.text.length != 6) {
-        _showError('Please enter 6 digit OTP');
-        return;
-      }
-      setState(() => loading = true);
-
-      await authService.verifyOTP(
-        verificationId: _verificationId!,
-        otp: otpController.text,
-        onSuccess: () {
-          setState(() => loading = false);
-          _timer?.cancel(); // Timer cleanup
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (_) => const AuthWrapper()),
-            (route) => false,
-          );
-        },
-        onError: (error) {
-          setState(() => loading = false);
-          _showError(error);
-        },
-      );
-    } else {
-      // ---> SEND OTP
-      if (phoneController.text.length != 10) {
-        _showError('Enter valid 10 digit number');
-        return;
-      }
-      setState(() => loading = true);
-
-      await authService.sendOTP(
-        phone: '+91${phoneController.text}',
-        onCodeSent: (verificationId) {
-          setState(() {
-            loading = false;
-            isOtpSent = true;
-            _verificationId = verificationId;
-          });
-          // ⏳ Start Timer & Listener
-          _startTimer();
-          listenForCode();
-        },
-        onError: (error) {
-          setState(() => loading = false);
-          _showError(error);
-        },
-      );
-    }
-  }
-
-  void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-          content:
-              Text(msg, style: const TextStyle(fontFamily: 'DejaVuSansMono')),
-          backgroundColor: Colors.black87),
     );
   }
 }
