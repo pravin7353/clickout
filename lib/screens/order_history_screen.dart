@@ -46,7 +46,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     });
   }
 
-  String _getSortLabel() {
+  /*String _getSortLabel() {
     switch (_currentSort) {
       case SortType.pendingFirst:
         return "Action Required First";
@@ -59,7 +59,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
       case SortType.dateLatest:
         return "Latest First";
     }
-  }
+  }*/
 
   void _confirmDeleteOrder(String orderId, Color cherryRedDark) {
     showDialog(
