@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/cart_service.dart';
+import '../services/cart/cart_service.dart';
 import '../models/cart_item.dart'; // ✅ YE LINE MISSING THI (Ab Red Line Jayegi)
 
 class ProductCard extends StatelessWidget {

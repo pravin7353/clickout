@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
 import '../widgets/custom_loader.dart';
-import '../services/auth_service.dart';
+import '../services/auth/auth_service.dart';
 
 class AuthWrapper extends StatelessWidget {
   const AuthWrapper({super.key});

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/cart_service.dart';
+import '../services/cart/cart_service.dart';
 import '../theme/app_theme.dart'; // Brand colors ke liye
 
 class CartIconBadge extends StatelessWidget {

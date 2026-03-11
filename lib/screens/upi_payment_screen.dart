@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
-import '../services/order_service.dart';
-import '../services/cart_service.dart';
+import '../services/orders/order_service.dart';
+import '../services/cart/cart_service.dart';
 import 'home_screen.dart';
 import 'order_detail_screen.dart';
 

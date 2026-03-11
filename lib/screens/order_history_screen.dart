@@ -46,21 +46,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
     });
   }
 
-  /*String _getSortLabel() {
-    switch (_currentSort) {
-      case SortType.pendingFirst:
-        return "Action Required First";
-      case SortType.completedFirst:
-        return "Cleared First";
-      case SortType.amountAsc:
-        return "Amount (Low to High)";
-      case SortType.amountDesc:
-        return "Amount (High to Low)";
-      case SortType.dateLatest:
-        return "Latest First";
-    }
-  }*/
-
   void _confirmDeleteOrder(String orderId, Color cherryRedDark) {
     showDialog(
       context: context,
@@ -204,17 +189,36 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                         ),
                       ),
                     ),
-                    const TabBar(
-                      indicatorColor: Colors.white,
-                      indicatorWeight: 4,
-                      labelColor: Colors.white,
-                      unselectedLabelColor: Colors.white54,
-                      labelStyle:
-                          TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                      tabs: [
-                        Tab(text: "LIVE & HISTORY ⏱️"),
-                        Tab(text: "BLACK BOX ⬛")
-                      ],
+                    Container(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.black26,
+                        borderRadius: BorderRadius.circular(25),
+                      ),
+                      child: TabBar(
+                        indicatorSize: TabBarIndicatorSize.tab,
+                        indicator: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(25),
+                          boxShadow: const [
+                            BoxShadow(
+                                color: Colors.black12,
+                                blurRadius: 5,
+                                offset: Offset(0, 2))
+                          ],
+                        ),
+                        labelColor: cherryRedDark,
+                        unselectedLabelColor: Colors.white,
+                        labelStyle: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            letterSpacing: 0.5),
+                        tabs: const [
+                          Tab(text: "LIVE & HISTORY ⏱️"),
+                          Tab(text: "BLACK BOX ⬛")
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -241,10 +245,9 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
 
                         final allOrders = snapshot.data!.docs;
 
-                        // 🟢 LAYER A: LIVE & HISTORY
+                        // 🟢 LAYER A: LIVE & HISTORY (BULLETPROOF FIX)
                         var liveOrders = allOrders.where((doc) {
                           final data = doc.data() as Map<String, dynamic>;
-
                           String exitStatus = (data['exitStatus'] ?? '')
                               .toString()
                               .toUpperCase();
@@ -257,26 +260,24 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                           bool isExpired = expiresAt != null &&
                               DateTime.now().isAfter(expiresAt);
 
+                          // 🚨 STRICT RULE: Rejected orders CANNOT be hidden from live!
+                          if (exitStatus == 'REJECTED') return true;
+
                           bool isCleanExit = (exitStatus == 'COMPLETED' ||
                               exitStatus == 'APPROVED' ||
                               exitStatus == 'EXITED');
-
-                          // Is it actively being processed?
                           bool isActivePending = (payStatus == 'PENDING' ||
                                   exitStatus == 'PENDING' ||
                                   exitStatus == 'READY_FOR_EXIT') &&
-                              !isExpired &&
-                              exitStatus != 'REJECTED';
+                              !isExpired;
 
-                          // 🚀 THE ULTIMATE FIX: Agar process CHALU hai, toh galti se bhi hide nahi hoga!
                           if (data['isDeleted'] == true && !isActivePending) {
                             return false;
                           }
 
-                          if (isCleanExit) return true; // Hamesha dikhega
-                          if (isExpired) {
-                            return false; // Expire ho gaya toh Live se hatao
-                          }
+                          if (isCleanExit) return true;
+                          if (isExpired) return false;
+                          if (payStatus == 'REFUNDED') return false;
 
                           return true;
                         }).toList();
@@ -307,16 +308,11 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                               !isExpired &&
                               exitStatus != 'REJECTED';
 
-                          if (isActivePending) {
-                            return false; // Hide active flows from Black Box
-                          }
+                          if (isActivePending) return false;
 
-                          if (!isCleanExit && isExpired) {
-                            return true; // Abandoned logs
-                          }
-                          if (wasEverRejected) {
-                            return true; // Historical Reject logs
-                          }
+                          if (!isCleanExit && isExpired) return true;
+                          if (isCleanExit && wasEverRejected) return true;
+                          if (payStatus == 'REFUNDED') return true;
 
                           return false;
                         }).toList();
@@ -438,38 +434,42 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
         IconData displayIcon = Icons.help_outline;
 
         if (!isCleanExit && isExpired) {
-          displayStatus = "EXPIRED (8 HOURS OVER) 👻";
+          displayStatus = "EXPIRED (8 HOURS OVER)";
           displayColor = Colors.purpleAccent;
           displayIcon = Icons.auto_delete;
         } else if (exitStatus == 'REJECTED') {
-          displayStatus = "GUARD REJECTED (FIX REQUIRED) 🚫";
+          displayStatus = "GUARD REJECTED (FIX REQUIRED)";
           displayColor = Colors.red;
           displayIcon = Icons.gpp_bad;
         } else if (payStatus == 'PENDING') {
           if (paymentMode == 'CASH') {
-            displayStatus = "PENDING AT CASH COUNTER ⏳";
+            displayStatus = "PENDING AT CASH COUNTER";
             displayColor = Colors.orange;
             displayIcon = Icons.point_of_sale;
           } else {
-            displayStatus = "PENDING UPI PAYMENT 📱";
+            displayStatus = "PENDING UPI PAYMENT";
             displayColor = Colors.blueAccent;
             displayIcon = Icons.qr_code_2;
           }
         } else if (payStatus == 'PAID' &&
             (exitStatus == 'PENDING' || exitStatus == 'READY_FOR_EXIT')) {
-          displayStatus = "PENDING AT GATE PASS 🛡️";
+          displayStatus = "NEW GATE PASS GENERATED";
           displayColor = Colors.blue;
           displayIcon = Icons.qr_code_scanner;
         } else if (isCleanExit) {
           if (wasEverRejected) {
-            displayStatus = "FIXED & EXITED 🔧";
+            displayStatus = "FIXED & EXITED";
             displayColor = Colors.teal;
             displayIcon = Icons.build_circle;
           } else {
-            displayStatus = "CLEAR EXIT ✅";
+            displayStatus = "CLEAR EXIT";
             displayColor = Colors.green;
             displayIcon = Icons.check_circle;
           }
+        } else if (payStatus == 'PAID') {
+          displayStatus = "PAYMENT VERIFIED";
+          displayColor = Colors.blue;
+          displayIcon = Icons.qr_code_scanner;
         }
 
         void handleTap() {
@@ -494,26 +494,40 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
           child: Container(
             margin: const EdgeInsets.only(bottom: 15),
             padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: isBlackBox ? const Color(0xFF1E1E1E) : Colors.white,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                  color: isBlackBox
-                      ? Colors.redAccent.withValues(alpha: 0.3)
-                      : Colors.grey.withValues(alpha: 0.1)),
-              boxShadow: [
-                BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.05),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4))
-              ],
-            ),
+            decoration: isBlackBox
+                ? BoxDecoration(
+                    // 🚀 THE FIX: FUTURISTIC BLACKBOX DESIGN
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                        color: Colors.redAccent.withOpacity(0.8), width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.red.withOpacity(0.4),
+                        blurRadius: 15,
+                        spreadRadius: 2,
+                      )
+                    ],
+                  )
+                : BoxDecoration(
+                    // LIVE & HISTORY NORMAL DESIGN
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.05),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      )
+                    ],
+                  ),
             child: Row(
               children: [
                 Container(
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                        color: displayColor.withValues(alpha: 0.15),
+                        color:
+                            displayColor.withOpacity(isBlackBox ? 0.3 : 0.15),
                         shape: BoxShape.circle),
                     child: Icon(displayIcon, color: displayColor, size: 28)),
                 const SizedBox(width: 16),
@@ -541,9 +555,9 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                            color: displayColor.withValues(alpha: 0.1),
+                            color: displayColor.withOpacity(0.1),
                             border: Border.all(
-                                color: displayColor.withValues(alpha: 0.3)),
+                                color: displayColor.withOpacity(0.3)),
                             borderRadius: BorderRadius.circular(6)),
                         child: Text(displayStatus,
                             style: TextStyle(
@@ -552,6 +566,8 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                                 letterSpacing: 0.5,
                                 fontWeight: FontWeight.bold)),
                       ),
+
+                      // 🛡️ FORENSIC LOG INJECTORS
                       if (isBlackBox && !isCleanExit && isExpired)
                         const Padding(
                             padding: EdgeInsets.only(top: 8.0),
@@ -572,15 +588,13 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                     ],
                   ),
                 ),
+                // 🚀 THE FIX: NO DELETE BUTTON IN MENU EVER
                 PopupMenuButton<String>(
                   icon: Icon(Icons.more_vert,
                       color: isBlackBox ? Colors.white54 : Colors.grey),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(15)),
                   onSelected: (value) {
-                    if (value == 'delete' && !isBlackBox) {
-                      _confirmDeleteOrder(doc.id, cherryRedDark);
-                    }
                     if (value == 'view') handleTap();
                   },
                   itemBuilder: (BuildContext context) =>
@@ -594,18 +608,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                           Text('View Details',
                               style: TextStyle(fontWeight: FontWeight.bold))
                         ])),
-                    if (!isBlackBox)
-                      const PopupMenuItem<String>(
-                          value: 'delete',
-                          child: Row(children: [
-                            Icon(Icons.delete_outline,
-                                size: 20, color: Colors.red),
-                            SizedBox(width: 10),
-                            Text('Hide from History',
-                                style: TextStyle(
-                                    color: Colors.red,
-                                    fontWeight: FontWeight.bold))
-                          ])),
                   ],
                 ),
               ],

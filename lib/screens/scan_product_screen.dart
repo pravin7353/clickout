@@ -6,8 +6,8 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
-import '../services/firestore_service.dart';
-import '../services/cart_service.dart';
+import '../services/firestore/firestore_service.dart';
+import '../services/cart/cart_service.dart';
 
 class ScanProductScreen extends StatefulWidget {
   const ScanProductScreen({super.key});
@@ -170,13 +170,12 @@ class _ScanProductScreenState extends State<ScanProductScreen>
 
         try {
           cart.add(
-              barcode: code,
-              name: productData['name'] ?? 'Unknown Item',
-              price: price,
-              gst: gst,
-              weight: weight,
-              stock: stock,
-              maxQtyPerOrder: maxQty);
+            barcode: code,
+            name: productData['name'] ?? 'Unknown Item',
+            price: price,
+            gst: gst,
+            weight: weight,
+          );
 
           if (isUpdate) {
             ScaffoldMessenger.of(context).showSnackBar(

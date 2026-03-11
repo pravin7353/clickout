@@ -1,44 +1,89 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/material.dart';
 
 class UnifiedAuthService {
   static final FirebaseAuth _auth = FirebaseAuth.instance;
   static final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // ==========================================================
-  // 📱 1. PHONE OTP ENGINE (Customers, Guards, Cashiers)
-  // ==========================================================
+  // 🧠 HELPER: Create Session ID (Ye ab Auto-login mein bhi chalega)
+  static Future<void> _setupUserSession(UserCredential userCred) async {
+    String sessionId = DateTime.now().millisecondsSinceEpoch.toString();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setString('localSessionId', sessionId);
 
+    String? fcmToken;
+    try {
+      fcmToken = await FirebaseMessaging.instance.getToken();
+    } catch (e) {
+      debugPrint("FCM error: $e");
+    }
+
+    await _db.collection('users').doc(userCred.user!.uid).set({
+      'phone': userCred.user!.phoneNumber,
+      'activeSessionId': sessionId,
+      'lastLoginAt': FieldValue.serverTimestamp(),
+      'lastDeviceId': 'MobileApp',
+      'fcmTokens': fcmToken != null ? FieldValue.arrayUnion([fcmToken]) : [],
+    }, SetOptions(merge: true));
+  }
+
+  // ==========================================================
+  // 📱 1. PHONE OTP ENGINE (Smart Rate Limiting + Auto Verify Fix)
+  // ==========================================================
   static Future<void> sendPhoneOtp({
     required String phone,
     required Function(String verificationId) onCodeSent,
     required Function(String error) onError,
+    required VoidCallback onAutoLoginSuccess, // 🔥 Naya Hatiyar
   }) async {
     try {
-      // 🛡️ SPARK PLAN SAVER: 60-Second Cooldown Check (Local)
+      // 🛑 SMART RATE LIMITER (3 OTPs -> 5 Min Block)
       final prefs = await SharedPreferences.getInstance();
-      final lastSent = prefs.getInt('last_otp_$phone') ?? 0;
-      final now = DateTime.now().millisecondsSinceEpoch;
+      int attempts = prefs.getInt('otp_attempts_$phone') ?? 0;
+      int blockUntil = prefs.getInt('otp_block_$phone') ?? 0;
+      int now = DateTime.now().millisecondsSinceEpoch;
 
-      if (now - lastSent < 60000) {
-        throw "Please wait 60 seconds before requesting another OTP.";
+      if (now < blockUntil) {
+        int remainingMin = ((blockUntil - now) / 60000).ceil();
+        onError("Too many attempts. Blocked for $remainingMin minutes.");
+        return;
       }
+
+      if (attempts >= 3) {
+        await prefs.setInt(
+            'otp_block_$phone', now + (5 * 60 * 1000)); // 5 min block
+        await prefs.setInt('otp_attempts_$phone', 0);
+        onError("Limit reached. System blocked for 5 minutes.");
+        return;
+      }
+
+      await prefs.setInt('otp_attempts_$phone', attempts + 1);
 
       await _auth.verifyPhoneNumber(
         phoneNumber: phone,
-        // Web ReCAPTCHA handles this automatically if setup correctly
+        // 🔥 THE AUTO-VERIFY FIX (Login Loop Yahan Khatam Hoga)
         verificationCompleted: (PhoneAuthCredential credential) async {
-          // Auto-resolution (mostly Android)
-          await _auth.signInWithCredential(credential);
+          try {
+            UserCredential userCred =
+                await _auth.signInWithCredential(credential);
+            await _setupUserSession(userCred); // 🚨 Guard ko ID card de diya!
+
+            // Reset Limits on Success
+            await prefs.remove('otp_attempts_$phone');
+            await prefs.remove('otp_block_$phone');
+
+            onAutoLoginSuccess();
+          } catch (e) {
+            onError("Auto-login failed: $e");
+          }
         },
         verificationFailed: (FirebaseAuthException e) {
-          onError(e.message ?? "Verification failed.");
+          onError(e.message ?? "Verification Failed");
         },
-        codeSent: (String verificationId, int? resendToken) async {
-          // Save timestamp to prevent spam
-          await prefs.setInt(
-              'last_otp_$phone', DateTime.now().millisecondsSinceEpoch);
+        codeSent: (String verificationId, int? resendToken) {
           onCodeSent(verificationId);
         },
         codeAutoRetrievalTimeout: (String verificationId) {},
@@ -48,112 +93,43 @@ class UnifiedAuthService {
     }
   }
 
-  static Future<UserCredential?> verifyOtpAndLogin({
+  // 📝 2. MANUAL OTP VERIFICATION
+  static Future<void> verifyManualOTP({
     required String verificationId,
-    required String smsCode,
-    required String roleCollection, // 'users', 'guards', or 'cashiers'
-    required Map<String, dynamic> initialData, // Data to save if new user
+    required String otp,
+    required VoidCallback onSuccess,
+    required Function(String error) onError,
   }) async {
     try {
       PhoneAuthCredential credential = PhoneAuthProvider.credential(
         verificationId: verificationId,
-        smsCode: smsCode,
+        smsCode: otp,
       );
-
       UserCredential userCred = await _auth.signInWithCredential(credential);
 
-      // 🧠 AUTO-CREATION & ROLE ASSIGNMENT
-      if (userCred.user != null) {
-        final docRef = _db.collection(roleCollection).doc(userCred.user!.uid);
-        final doc = await docRef.get();
+      await _setupUserSession(userCred); // 🚨 Guard ko ID card do
 
-        if (!doc.exists) {
-          // 🚨 SMART SECURITY: Customers automatically active honge, par Staff 'false' rahega jab tak Admin verify na kare!
-          bool isAutoActive = (roleCollection == 'users');
-
-          // Create new user in DB
-          await docRef.set({
-            ...initialData,
-            'uid': userCred.user!.uid,
-            'phone': userCred.user!.phoneNumber,
-            'createdAt': FieldValue.serverTimestamp(),
-            'isActive': isAutoActive, // Yahan masterstroke khela hai humne!
-          });
-        }
-
-        // Update session ID for anti-hijack (from Module 2)
-        await docRef.update({
-          'lastLoginAt': FieldValue.serverTimestamp(),
-          'activeSessionId': DateTime.now().millisecondsSinceEpoch.toString(),
-        });
-      }
-      return userCred;
-    } catch (e) {
-      throw "Invalid OTP. Please try again.";
-    }
-  }
-
-  // ==========================================================
-  // 📧 2. ADMIN MAGIC LINK (Passwordless - Ultra Secure)
-  // ==========================================================
-
-  static Future<void> sendAdminMagicLink(String email, String bundleId) async {
-    try {
-      // Check if email actually belongs to an admin first
-      final query = await _db
-          .collection('admin_users')
-          .where('email', isEqualTo: email)
-          .get();
-      if (query.docs.isEmpty) throw "Access Denied: Unregistered Admin Email.";
-
-      var acs = ActionCodeSettings(
-        url:
-            'https://clickout-admin.web.app/finishSignUp?cartId=1234', // Replace with your hosting URL
-        handleCodeInApp: true,
-        iOSBundleId: bundleId,
-        androidPackageName: bundleId,
-        androidInstallApp: false,
-        androidMinimumVersion: '12',
-      );
-
-      await _auth.sendSignInLinkToEmail(email: email, actionCodeSettings: acs);
-
+      // Reset limits
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-          'emailForSignIn', email); // Save locally to verify later
+      await prefs.remove('otp_attempts_${userCred.user?.phoneNumber}');
+      await prefs.remove('otp_block_${userCred.user?.phoneNumber}');
+
+      onSuccess();
     } catch (e) {
-      throw e.toString();
+      onError("Invalid OTP. Try again.");
     }
   }
 
-  static Future<void> verifyMagicLink(String emailLink) async {
-    final prefs = await SharedPreferences.getInstance();
-    String? email = prefs.getString('emailForSignIn');
-
-    if (email == null) throw "Session expired. Try logging in again.";
-
-    if (_auth.isSignInWithEmailLink(emailLink)) {
-      try {
-        await _auth.signInWithEmailLink(email: email, emailLink: emailLink);
-        // Clear email from storage
-        await prefs.remove('emailForSignIn');
-      } catch (e) {
-        throw "Error signing in with link: $e";
-      }
-    }
-  }
-
-  // ==========================================================
   // 🚪 3. GLOBAL LOGOUT
-  // ==========================================================
   static Future<void> logout(String roleCollection) async {
     final user = _auth.currentUser;
     if (user != null) {
-      // Destroy Session ID
       await _db.collection(roleCollection).doc(user.uid).update({
         'activeSessionId': FieldValue.delete(),
-      }).catchError((_) {}); // Ignore if document doesn't exist
+      });
     }
     await _auth.signOut();
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.remove('localSessionId');
   }
 }

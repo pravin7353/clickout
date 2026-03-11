@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart'; // For Haptics
 import 'package:provider/provider.dart';
-import '../services/cart_service.dart';
-import '../services/order_service.dart';
+import '../services/cart/cart_service.dart';
+import '../services/orders/order_service.dart';
 import 'payment_qr_screen.dart';
 import 'upi_payment_screen.dart';
 
@@ -128,49 +128,91 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           ),
                         ),
                         const SizedBox(height: 30),
-                        const Text("Select Payment Method",
-                            style: TextStyle(
-                                fontFamily: 'DejaVuSansMono',
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87)),
-                        const SizedBox(height: 15),
-                        _buildPaymentOption(
-                            icon: Icons.qr_code_2,
-                            title: "Pay by any UPI app",
-                            subtitle: "GPay, PhonePe, Paytm",
-                            method: PaymentMethod.upi, // ✅ Enum
-                            activeColor: cherryRedDark,
-                            isUpi: true),
-                        const SizedBox(height: 10),
-                        _buildPaymentOption(
-                            icon: Icons.money,
-                            title: "Pay Via Cash",
-                            subtitle: "Pay at counter",
-                            method: PaymentMethod.cash, // ✅ Enum
-                            activeColor: cherryRedDark),
-                        const SizedBox(height: 10),
-                        _buildPaymentOption(
-                            icon: Icons.credit_card,
-                            title: "Debit / Credit Card",
-                            subtitle: "Visa, Mastercard, Rupay",
-                            method: PaymentMethod.card, // ✅ Enum
-                            activeColor: cherryRedDark),
-                        const SizedBox(height: 40),
+
+                        // 🚀 THE FIX: UI SHIELD FOR CORRECTION MODE
+                        if (cart.isCorrectionMode) ...[
+                          Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                color: Colors.green.shade50,
+                                borderRadius: BorderRadius.circular(15),
+                                border:
+                                    Border.all(color: Colors.green.shade200),
+                              ),
+                              child: Row(children: [
+                                const Icon(Icons.verified_user,
+                                    color: Colors.green, size: 30),
+                                const SizedBox(width: 15),
+                                Expanded(
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                      const Text("Payment Verified",
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.green,
+                                              fontSize: 16)),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                          "You have already paid for this order. Proceed to generate your revised Gate Pass.",
+                                          style: TextStyle(
+                                              color: Colors.green.shade800,
+                                              fontSize: 12)),
+                                    ]))
+                              ])),
+                          const SizedBox(height: 40),
+                        ] else ...[
+                          const Text("Select Payment Method",
+                              style: TextStyle(
+                                  fontFamily: 'DejaVuSansMono',
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87)),
+                          const SizedBox(height: 15),
+                          _buildPaymentOption(
+                              icon: Icons.qr_code_2,
+                              title: "Pay by any UPI app",
+                              subtitle: "GPay, PhonePe, Paytm",
+                              method: PaymentMethod.upi,
+                              activeColor: cherryRedDark,
+                              isUpi: true),
+                          const SizedBox(height: 10),
+                          _buildPaymentOption(
+                              icon: Icons.money,
+                              title: "Pay Via Cash",
+                              subtitle: "Pay at counter",
+                              method: PaymentMethod.cash,
+                              activeColor: cherryRedDark),
+                          const SizedBox(height: 10),
+                          _buildPaymentOption(
+                              icon: Icons.credit_card,
+                              title: "Debit / Credit Card",
+                              subtitle: "Visa, Mastercard, Rupay",
+                              method: PaymentMethod.card,
+                              activeColor: cherryRedDark),
+                          const SizedBox(height: 40),
+                        ],
+
                         SizedBox(
                           width: double.infinity,
                           height: 56,
                           child: ElevatedButton(
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: cherryRedDark,
+                              backgroundColor: cart.isCorrectionMode
+                                  ? Colors.green
+                                  : cherryRedDark,
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(16)),
                               elevation: 5,
                             ),
                             onPressed: () => _handlePayment(context, cart),
-                            child: const Text("PAY NOW",
-                                style: TextStyle(
+                            child: Text(
+                                cart.isCorrectionMode
+                                    ? "GENERATE GATE PASS"
+                                    : "PAY NOW",
+                                style: const TextStyle(
                                     fontFamily: 'DejaVuSansMono',
                                     fontSize: 18,
                                     fontWeight: FontWeight.bold)),
@@ -265,7 +307,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
       return;
     }
-    _placeOrder(cart); // ✅ No mode passing needed
+    _placeOrder(cart);
   }
 
   void _showValidationAlert(List<String> warnings) {
@@ -302,7 +344,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // 🚀 PERFECT DYNAMIC ROUTING
   void _placeOrder(CartService cart) async {
     try {
-      HapticFeedback.mediumImpact(); // 📱 Solid Proceed Feel
+      HapticFeedback.mediumImpact();
       final items = cart.items.values.map((item) => item.toJson()).toList();
       final double orderTotal = cart.grandTotal;
 
@@ -313,12 +355,24 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         totalAmount: orderTotal,
         gstTotal: cart.totalGST,
         paymentMode: modeString,
+        correctionOrderId:
+            cart.correctionOrderId, // 🚀 THE MISSING LINK PASSED TO BACKEND!
       );
 
       if (mounted) {
         setState(() => _isLoading = false);
 
-        // 🔀 DYNAMIC NAVIGATION BASED ON STATE
+        // 🚀 THE FIX: BYPASS PAYMENT SCREENS COMPLETELY IF IT'S A CORRECTION
+        if (cart.isCorrectionMode) {
+          Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                  builder: (_) =>
+                      PaymentQRScreen(orderId: orderId, amount: orderTotal)));
+          return;
+        }
+
+        // 🔀 DYNAMIC NAVIGATION BASED ON STATE FOR NORMAL FLOW
         if (_selectedPayment == PaymentMethod.upi) {
           Navigator.pushReplacement(
               context,
@@ -332,7 +386,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   builder: (_) =>
                       PaymentQRScreen(orderId: orderId, amount: orderTotal)));
         } else {
-          // Card Payment Fallback
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text(
                   "Card Payments coming soon! Redirecting to Cash flow...")));

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // History ke liye
-import '../services/cart_service.dart';
+import '../services/cart/cart_service.dart';
 
 class ProductSearchDelegate extends SearchDelegate {
   // 🔥 THEME OVERRIDE (Cherry Red AppBar)

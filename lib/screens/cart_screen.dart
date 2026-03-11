@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/cart_service.dart';
+import '../services/cart/cart_service.dart';
 import '../models/cart_item.dart';
 import 'checkout_screen.dart';
 import 'scan_product_screen.dart';
@@ -32,41 +32,132 @@ class _CartScreenState extends State<CartScreen> {
     if (changes.isNotEmpty && mounted) {
       showDialog(
         context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Row(children: [
-            Icon(Icons.info_outline, color: Colors.orange),
-            SizedBox(width: 10),
-            Text("Cart Updated")
-          ]),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                  "Some items were updated based on real-time store data:",
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 10),
-              ...changes.map((msg) => Padding(
-                    padding: const EdgeInsets.only(bottom: 5),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text("• ",
-                            style: TextStyle(fontWeight: FontWeight.bold)),
-                        Expanded(
-                            child: Text(msg,
-                                style: const TextStyle(fontSize: 13))),
-                      ],
+        barrierDismissible:
+            false, // Taaki customer msg padhe bina close na kare
+        builder: (ctx) => Dialog(
+          backgroundColor:
+              Colors.transparent, // Background hide kiya custom design ke liye
+          insetPadding: const EdgeInsets.all(20),
+          child: Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.purple.shade50, Colors.pink.shade50],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.pink.withOpacity(0.2),
+                  blurRadius: 20,
+                  spreadRadius: 5,
+                )
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 🎈 BOUNCING PARTY EMOJI ANIMATION
+                TweenAnimationBuilder(
+                  duration: const Duration(milliseconds: 900),
+                  tween: Tween<double>(begin: 0.1, end: 1.0),
+                  curve: Curves.elasticOut,
+                  builder: (context, scale, child) {
+                    return Transform.scale(
+                      scale: scale,
+                      child: const Text("🎉", style: TextStyle(fontSize: 60)),
+                    );
+                  },
+                ),
+                const SizedBox(height: 15),
+
+                // ✨ HAPPY HEADER
+                const Text(
+                  "Woohoo! Cart Synced! ✨",
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.purple,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  "We just auto-magically applied the latest store prices & offers to your items:",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.black87,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 20),
+
+                // 📝 JOYFUL LIST OF CHANGES
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: Colors.pink.shade100, width: 2),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: changes
+                        .map((msg) => Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text("🥳 ",
+                                      style: TextStyle(fontSize: 18)),
+                                  Expanded(
+                                    child: Text(
+                                      msg,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.black87,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ))
+                        .toList(),
+                  ),
+                ),
+                const SizedBox(height: 25),
+
+                // 🚀 ACTION BUTTON
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.pinkAccent,
+                      foregroundColor: Colors.white,
+                      elevation: 5,
+                      shadowColor: Colors.pinkAccent.withOpacity(0.5),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30),
+                      ),
                     ),
-                  )),
-            ],
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text(
+                      "Awesome! Let's Go 🚀",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text("OK, Got it"),
-            )
-          ],
         ),
       );
     }
@@ -158,11 +249,14 @@ class _CartScreenState extends State<CartScreen> {
                             final item = cart.items.values.toList()[i];
                             return Dismissible(
                               key: Key(item.barcode),
-                              direction: DismissDirection.horizontal,
-                              background:
-                                  _buildSwipeBackground(Alignment.centerLeft),
-                              secondaryBackground:
-                                  _buildSwipeBackground(Alignment.centerRight),
+                              direction: cart.isCorrectionMode
+                                  ? DismissDirection.none
+                                  : DismissDirection
+                                      .horizontal, // 🛑 Disable swipe if locked
+                              background: _buildSwipeBackground(
+                                  Alignment.centerLeft, cart.isCorrectionMode),
+                              secondaryBackground: _buildSwipeBackground(
+                                  Alignment.centerRight, cart.isCorrectionMode),
                               onDismissed: (direction) {
                                 final deletedItem = item;
                                 cart.deleteItem(item.barcode);
@@ -176,21 +270,23 @@ class _CartScreenState extends State<CartScreen> {
                                     action: SnackBarAction(
                                       label: 'UNDO',
                                       textColor: Colors.yellow,
-                                      onPressed: () {
-                                        // 🧠 SMART UNDO PHASE 1
-                                        cart.add(
-                                          barcode: deletedItem.barcode,
-                                          name: deletedItem.name,
-                                          price: deletedItem
-                                              .originalPrice, // 🔥 FIX: .price ki jagah .originalPrice
-                                          gst: deletedItem.gst,
-                                          weight: deletedItem.weight,
-                                        );
-                                        // 🔄 SMART UNDO PHASE 2
-                                        for (int i = 1;
-                                            i < deletedItem.quantity;
-                                            i++) {
-                                          cart.increment(deletedItem.barcode);
+                                      onPressed: () async {
+                                        try {
+                                          await cart.add(
+                                            barcode: deletedItem.barcode,
+                                            name: deletedItem.name,
+                                            price: deletedItem.originalPrice,
+                                            gst: deletedItem.gst,
+                                            weight: deletedItem.weight,
+                                          );
+                                          for (int i = 1;
+                                              i < deletedItem.quantity;
+                                              i++) {
+                                            await cart
+                                                .increment(deletedItem.barcode);
+                                          }
+                                        } catch (e) {
+                                          // Ignore if stock runs out during undo
                                         }
                                       },
                                     ),
@@ -224,19 +320,28 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  Widget _buildSwipeBackground(Alignment alignment) {
+// ... inside _CartScreenState
+
+  Widget _buildSwipeBackground(Alignment alignment, bool isCorrectionMode) {
     return Container(
       decoration: BoxDecoration(
-          color: Colors.red[400], borderRadius: BorderRadius.circular(15)),
+          // Change color to grey if locked to show it's disabled
+          color: isCorrectionMode ? Colors.grey[400] : Colors.red[400],
+          borderRadius: BorderRadius.circular(15)),
       alignment: alignment,
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: const Icon(Icons.delete_outline, color: Colors.white, size: 28),
+      child: Icon(isCorrectionMode ? Icons.lock_outline : Icons.delete_outline,
+          color: Colors.white, size: 28),
     );
   }
 
   Widget _buildCartItem(CartItem item, CartService cart, Color primaryColor,
       BuildContext context) {
-    bool isMinQty = item.quantity <= 1;
+    // 🛡️ Determine if buttons should be disabled based on quantity OR Security Mode
+    bool isMinusDisabled = item.quantity <= 1 || cart.isCorrectionMode;
+    bool isPlusDisabled =
+        cart.isCorrectionMode; // Lock plus button completely in correction mode
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -264,14 +369,12 @@ class _CartScreenState extends State<CartScreen> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 🔥 FIX: .price ki jagah .originalPrice (Strike-through agar sale hai)
             if (item.clearanceActive && item.clearanceType == 'PERCENT')
               Text("₹${item.originalPrice.toStringAsFixed(2)}",
                   style: const TextStyle(
                       decoration: TextDecoration.lineThrough,
                       color: Colors.grey,
                       fontSize: 12)),
-            // 💰 Final Unit Price
             Text("₹${item.finalUnitPrice.toStringAsFixed(2)}",
                 style: TextStyle(
                     color: item.clearanceActive
@@ -279,7 +382,6 @@ class _CartScreenState extends State<CartScreen> {
                         : primaryColor,
                     fontWeight: FontWeight.bold,
                     fontSize: 14)),
-            // 🎁 BOGO Tag
             if (item.clearanceType == 'BOGO')
               Text("🎁 You get: ${item.effectiveQty} items",
                   style: const TextStyle(
@@ -291,20 +393,64 @@ class _CartScreenState extends State<CartScreen> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _iconBtn(Icons.remove, () => cart.decrement(item.barcode),
-                isDisabled: isMinQty),
+            // 🛑 MINUS BUTTON (Disabled in Correction Mode)
+            _iconBtn(Icons.remove, () {
+              if (cart.isCorrectionMode) {
+                _showSecurityError(context,
+                    "Quantity cannot be reduced during Guard Correction.");
+                return;
+              }
+              cart.decrement(item.barcode);
+            }, isDisabled: isMinusDisabled),
+
             SizedBox(
                 width: 35,
                 child: Text("${item.quantity}",
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                         fontWeight: FontWeight.bold, fontSize: 16))),
-            _iconBtn(Icons.add, () => cart.increment(item.barcode),
-                color: primaryColor),
+
+            // 🛑 PLUS BUTTON (Disabled in Correction Mode)
+            _iconBtn(Icons.add, () async {
+              if (cart.isCorrectionMode) {
+                _showSecurityError(
+                    context, "Cannot add items during Guard Correction.");
+                return;
+              }
+              try {
+                await cart.increment(item.barcode);
+              } catch (e) {
+                _showSecurityError(context, e.toString());
+              }
+            }, color: primaryColor, isDisabled: isPlusDisabled),
           ],
         ),
       ),
     );
+  }
+
+  // Helper function to show errors consistently
+  void _showSecurityError(BuildContext context, String message) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.security, color: Colors.white),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(message,
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.redAccent,
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Widget _iconBtn(IconData icon, VoidCallback onTap,

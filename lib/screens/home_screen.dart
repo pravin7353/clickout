@@ -5,7 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
-import '../services/cart_service.dart';
+import '../services/cart/cart_service.dart';
 import '../widgets/product_search_delegate.dart';
 import 'scan_product_screen.dart';
 import 'profile_screen.dart';
@@ -29,31 +29,42 @@ class _HomeScreenState extends State<HomeScreen>
   final Color cherryRedLight = const Color(0xFFEF5350);
   final Color cherryRedDark = const Color(0xFFC62828);
 
-  // 🎞️ SLIDESHOW VARIABLES
+  // 🎞️ DYNAMIC SLIDESHOW VARIABLES
   int _currentSlideIndex = 0;
   Timer? _slideTimer;
-  final List<Map<String, dynamic>> _slides = [
+  StreamSubscription<QuerySnapshot>?
+      _offerSubscription; // 👈 Live listener for offers
+
+  // Ye aapke purane static slides hain
+  final List<Map<String, dynamic>> _staticSlides = [
     {
       "title": "Start Shopping",
       "subtitle": "Scan items to add to cart.",
-      "icon": Icons.qr_code_scanner
+      "icon": Icons.qr_code_scanner,
+      "isOffer": false,
     },
     {
       "title": "Skip the Queue",
       "subtitle": "Pay online & generate Gate Pass.",
-      "icon": Icons.run_circle_outlined
+      "icon": Icons.run_circle_outlined,
+      "isOffer": false,
     },
     {
       "title": "Easy Payment",
       "subtitle": "UPI, Cards & Net Banking supported.",
-      "icon": Icons.payment
+      "icon": Icons.payment,
+      "isOffer": false,
     },
     {
       "title": "Family Mode",
       "subtitle": "Best offers applied automatically.",
-      "icon": Icons.family_restroom
+      "icon": Icons.family_restroom,
+      "isOffer": false,
     },
   ];
+
+  // Ye wo list hai jo actual me screen par dikhegi (Live Offers + Static)
+  List<Map<String, dynamic>> _activeSlides = [];
 
   @override
   void initState() {
@@ -67,13 +78,67 @@ class _HomeScreenState extends State<HomeScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
+    // Initialize with static slides first
+    _activeSlides = List.from(_staticSlides);
+
+    // 🚀 Start the Offer Engine!
+    _setupOfferStream();
+
     _slideTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (!mounted) return;
       setState(() {
-        _currentSlideIndex = (_currentSlideIndex + 1) % _slides.length;
+        if (_activeSlides.isNotEmpty) {
+          _currentSlideIndex = (_currentSlideIndex + 1) % _activeSlides.length;
+        }
       });
     });
 
     _checkLocationPermission();
+  }
+
+  // 🧠 THE REAL-TIME OFFER ENGINE (Alternate Pattern Logic)
+  void _setupOfferStream() {
+    _offerSubscription = FirebaseFirestore.instance
+        .collection('products')
+        .where('clearanceActive', isEqualTo: true)
+        .limit(5) // Thode zyada offers uthate hain taaki alternate kar sakein
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+
+      List<Map<String, dynamic>> offerSlides = [];
+      for (var doc in snapshot.docs) {
+        final data = doc.data();
+        offerSlides.add({
+          "title": data['name'] ?? "Special Offer",
+          "subtitle": data['clearanceTag'] ?? "Great discount inside!",
+          "icon": Icons.local_fire_department, // Hot offer icon
+          "isOffer": true,
+        });
+      }
+
+      // 🔄 ALTERNATE MERGE LOGIC (Normal -> Offer -> Normal -> Offer...)
+      List<Map<String, dynamic>> mergedSlides = [];
+      int offerIndex = 0;
+      for (int i = 0; i < _staticSlides.length; i++) {
+        mergedSlides.add(_staticSlides[i]); // Add Normal slide
+        // Agar offer available hai, toh normal ke baad ek offer ghusa do
+        if (offerIndex < offerSlides.length) {
+          mergedSlides.add(offerSlides[offerIndex]);
+          offerIndex++;
+        }
+      }
+      // Agar aur offers bache hain, toh end mein laga do
+      while (offerIndex < offerSlides.length) {
+        mergedSlides.add(offerSlides[offerIndex]);
+        offerIndex++;
+      }
+
+      setState(() {
+        _activeSlides = mergedSlides;
+        _currentSlideIndex = 0; // Reset timer safely
+      });
+    });
   }
 
   Future<void> _checkLocationPermission() async {
@@ -87,6 +152,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     _pulseController.dispose();
     _slideTimer?.cancel();
+    _offerSubscription?.cancel(); // Memory leak roko!
     super.dispose();
   }
 
@@ -242,6 +308,13 @@ class _HomeScreenState extends State<HomeScreen>
 
   // 🍒 HOME UI
   Widget _buildCherryHomeBody() {
+    // 💡 Safely handle dynamic slide data
+    Map<String, dynamic> currentSlideData = _activeSlides.isNotEmpty
+        ? _activeSlides[_currentSlideIndex]
+        : _staticSlides[0];
+
+    bool isOffer = currentSlideData['isOffer'] == true;
+
     return Stack(
       children: [
         Container(
@@ -350,18 +423,35 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               const SizedBox(height: 30),
 
-              // SLIDESHOW
+// 🎞️ THE SMART DYNAMIC SLIDESHOW (Cheerful UI Upgrade)
               Container(
-                height: 80,
+                height: 90, // Thoda bada container
                 margin: const EdgeInsets.symmetric(horizontal: 24),
-                padding: const EdgeInsets.all(15),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
+                  // Agar Offer hai toh Gold/Orange Gradient, nahi toh clean white
+                  gradient: isOffer
+                      ? LinearGradient(colors: [
+                          Colors.orange.shade100,
+                          Colors.amber.shade50
+                        ], begin: Alignment.topLeft, end: Alignment.bottomRight)
+                      : const LinearGradient(
+                          colors: [Colors.white, Colors.white]),
+                  borderRadius:
+                      BorderRadius.circular(25), // Zyada rounded corners
+                  border: isOffer
+                      ? Border.all(
+                          color: Colors.orange.shade400,
+                          width: 2) // Offer par mota orange border
+                      : Border.all(color: Colors.white, width: 0),
                   boxShadow: [
                     BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 15,
+                        color: isOffer
+                            ? Colors.orange.withOpacity(0.4)
+                            : Colors.black.withOpacity(0.08),
+                        blurRadius: isOffer ? 25 : 15, // Offer par zyada glow
+                        spreadRadius: isOffer ? 2 : 0,
                         offset: const Offset(0, 8))
                   ],
                 ),
@@ -369,31 +459,62 @@ class _HomeScreenState extends State<HomeScreen>
                   duration: const Duration(milliseconds: 500),
                   transitionBuilder:
                       (Widget child, Animation<double> animation) {
-                    return FadeTransition(opacity: animation, child: child);
+                    // Thoda bounce effect transition ke liye
+                    return ScaleTransition(
+                        scale: animation,
+                        child:
+                            FadeTransition(opacity: animation, child: child));
                   },
                   child: Row(
                     key: ValueKey<int>(_currentSlideIndex),
                     children: [
+                      // ICON CONTAINER
                       Container(
-                        padding: const EdgeInsets.all(10),
+                        padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                            color: cherryRedLight.withOpacity(0.1),
-                            shape: BoxShape.circle),
-                        child: Icon(_slides[_currentSlideIndex]['icon'],
-                            color: cherryRedDark, size: 24),
+                            color: isOffer
+                                ? Colors.white
+                                : cherryRedLight.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                            boxShadow: isOffer
+                                ? [
+                                    BoxShadow(
+                                        color: Colors.orange.withOpacity(0.3),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 4))
+                                  ]
+                                : null),
+                        child: Icon(currentSlideData['icon'],
+                            color: isOffer
+                                ? Colors.orange.shade800
+                                : cherryRedDark,
+                            size: 28),
                       ),
-                      const SizedBox(width: 15),
+                      const SizedBox(width: 18),
+                      // TEXT SECTION
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(_slides[_currentSlideIndex]['title'],
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 16)),
-                            Text(_slides[_currentSlideIndex]['subtitle'],
+                            Text(currentSlideData['title'],
                                 style: TextStyle(
-                                    color: Colors.grey[600], fontSize: 12),
+                                    fontWeight: FontWeight.w900, // Zyada bold
+                                    fontSize: 17,
+                                    color: isOffer
+                                        ? Colors.brown.shade800
+                                        : Colors.black87,
+                                    letterSpacing: 0.5)),
+                            const SizedBox(height: 4),
+                            Text(currentSlideData['subtitle'],
+                                style: TextStyle(
+                                    color: isOffer
+                                        ? Colors.brown.shade600
+                                        : Colors.grey[600],
+                                    fontWeight: isOffer
+                                        ? FontWeight.w700
+                                        : FontWeight.normal,
+                                    fontSize: 13),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis),
                           ],

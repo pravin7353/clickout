@@ -26,7 +26,7 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
 
   // ⏱️ Resend Timer Logic
   Timer? _timer;
-  int _start = 60; // 🧠 Changed to 60s to match Unified Service cooldown
+  int _start = 15; // 🧠 FAST UX: 15 seconds cooldown
   bool _canResend = false;
 
   @override
@@ -40,73 +40,62 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
     setState(() {
       otpController.text = code ?? "";
     });
+
+    // 🚀 THE MAGIC: JAISE HI 6 DIGIT KA OTP AAYEGA, YE KHUD LOGIN DABA DEGA!
+    if (otpController.text.length == 6 && _verificationId != null) {
+      _verifyOtp();
+    }
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    cancel();
+    cancel(); // Cancel SMS listener
     super.dispose();
   }
 
   void _startTimer() {
     setState(() {
-      _start = 60;
+      _start = 15;
       _canResend = false;
     });
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_start == 0) {
         setState(() {
-          _timer?.cancel();
           _canResend = true;
+          timer.cancel();
         });
       } else {
-        setState(() => _start--);
+        setState(() {
+          _start--;
+        });
       }
     });
   }
 
-  void _resendOtp() async {
-    if (!_canResend) return;
+  void _sendOtp() async {
+    if (phoneController.text.length != 10) {
+      _showError("Please enter a valid 10-digit number");
+      return;
+    }
 
-    _startTimer();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Resending OTP...")),
-    );
+    setState(() => loading = true);
 
     await UnifiedAuthService.sendPhoneOtp(
-      phone: '+91${phoneController.text}',
-      onCodeSent: (verificationId) {
-        setState(() => _verificationId = verificationId);
-        listenForCode();
+      phone: "+91${phoneController.text}",
+      onCodeSent: (id) {
+        setState(() {
+          _verificationId = id;
+          isOtpSent = true;
+          loading = false;
+        });
+        _startTimer();
       },
-      onError: (error) => _showError(error),
-    );
-  }
-
-  // ⚡ 🧠 UNIFIED LOGIC
-  void _handleButtonPress() async {
-    if (isOtpSent) {
-      // ---> VERIFY
-      if (otpController.text.length != 6) {
-        _showError('Please enter 6 digit OTP');
-        return;
-      }
-      setState(() => loading = true);
-
-      try {
-        await UnifiedAuthService.verifyOtpAndLogin(
-          verificationId: _verificationId!,
-          smsCode: otpController.text,
-          roleCollection: 'users',
-          initialData: {
-            'trustScore': 100,
-            'totalVisits': 0
-          }, // Auto-create data
-        );
-
+      onError: (err) {
         setState(() => loading = false);
-        _timer?.cancel();
+        _showError(err);
+      },
+      onAutoLoginSuccess: () {
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context,
@@ -114,244 +103,319 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
             (route) => false,
           );
         }
-      } catch (e) {
-        setState(() => loading = false);
-        _showError(e.toString());
-      }
-    } else {
-      // ---> SEND OTP
-      if (phoneController.text.length != 10) {
-        _showError('Enter valid 10 digit number');
-        return;
-      }
-      setState(() => loading = true);
+      },
+    );
+  }
 
-      await UnifiedAuthService.sendPhoneOtp(
-        phone: '+91${phoneController.text}',
-        onCodeSent: (verificationId) {
-          setState(() {
-            loading = false;
-            isOtpSent = true;
-            _verificationId = verificationId;
-          });
-          _startTimer();
-          listenForCode();
-        },
-        onError: (error) {
-          setState(() => loading = false);
-          _showError(error);
-        },
-      );
+  void _verifyOtp() async {
+    String code = otpController.text.trim();
+    if (code.length != 6) {
+      _showError("Please enter the 6-digit OTP");
+      return;
     }
+
+    setState(() => loading = true);
+
+    await UnifiedAuthService.verifyManualOTP(
+      verificationId: _verificationId!,
+      otp: code,
+      onSuccess: () {
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const AuthWrapper()),
+            (route) => false,
+          );
+        }
+      },
+      onError: (err) {
+        setState(() {
+          loading = false;
+          otpController.clear();
+        });
+        _showError(err);
+      },
+    );
+  }
+
+  void _resendOtp() async {
+    if (!_canResend) return;
+
+    setState(() => loading = true);
+
+    await UnifiedAuthService.sendPhoneOtp(
+      phone: "+91${phoneController.text}",
+      onCodeSent: (id) {
+        setState(() {
+          _verificationId = id;
+          loading = false;
+        });
+        _startTimer();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("OTP Resent Successfully",
+                  style: TextStyle(color: Colors.white)),
+              backgroundColor: Color.fromARGB(255, 255, 255, 255)),
+        );
+      },
+      onError: (err) {
+        setState(() => loading = false);
+        _showError(err);
+      },
+      onAutoLoginSuccess: () {
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const AuthWrapper()),
+            (route) => false,
+          );
+        }
+      },
+    );
   }
 
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-          content:
-              Text(msg, style: const TextStyle(fontFamily: 'DejaVuSansMono')),
-          backgroundColor: Colors.black87),
+        content: Text(msg,
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: Colors.black87,
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
-  // UI REMAINS EXACTLY THE SAME (Untouched)
   @override
   Widget build(BuildContext context) {
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.light);
-
     return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [cherryRedLight, cherryRedDark],
-          ),
-        ),
-        child: SafeArea(
-          child: Center(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 20,
-                            offset: const Offset(0, 10))
-                      ],
-                    ),
-                    child: Icon(Icons.shopping_cart_rounded,
-                        color: cherryRedDark, size: 50),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'CLICKOUT',
-                    style: TextStyle(
-                      fontFamily: 'DejaVuSansMono',
-                      color: Colors.white,
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 2,
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: Text(
-                      isOtpSent
-                          ? 'Verify OTP'
-                          : 'Zero Queue.\nFastest Checkout.',
-                      key: ValueKey(isOtpSent),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontFamily: 'DejaVuSansMono',
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        height: 1.2,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    isOtpSent
-                        ? "Enter code sent to +91 ${phoneController.text}"
-                        : "Login to start shopping",
-                    style: TextStyle(
-                        fontFamily: 'DejaVuSansMono',
-                        color: Colors.white.withOpacity(0.8),
-                        fontSize: 12),
-                  ),
-                  const SizedBox(height: 40),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 300),
-                    child: isOtpSent ? _buildOtpInput() : _buildPhoneInput(),
-                  ),
-                  const SizedBox(height: 30),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 56,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: cherryRedDark,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15),
-                        ),
-                        elevation: 5,
-                      ),
-                      onPressed: loading ? null : _handleButtonPress,
-                      child: loading
-                          ? SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(
-                                  color: cherryRedDark, strokeWidth: 3))
-                          : Text(
-                              isOtpSent ? 'VERIFY & LOGIN' : 'GET OTP',
-                              style: const TextStyle(
-                                fontFamily: 'DejaVuSansMono',
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 1,
-                              ),
-                            ),
-                    ),
-                  ),
-                  if (isOtpSent)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 25),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                isOtpSent = false;
-                                otpController.clear();
-                                _timer?.cancel();
-                              });
-                            },
-                            child: const Text(
-                              "Change Number",
-                              style: TextStyle(
-                                  color: Colors.white70,
-                                  fontFamily: 'DejaVuSansMono',
-                                  decoration: TextDecoration.underline),
-                            ),
-                          ),
-                          Container(
-                              height: 15,
-                              width: 1,
-                              color: Colors.white30,
-                              margin:
-                                  const EdgeInsets.symmetric(horizontal: 10)),
-                          TextButton(
-                            onPressed: _canResend ? _resendOtp : null,
-                            child: Text(
-                              _canResend ? "Resend OTP" : "Resend in $_start s",
-                              style: TextStyle(
-                                  color: _canResend
-                                      ? Colors.white
-                                      : Colors.white30,
-                                  fontFamily: 'DejaVuSansMono',
-                                  fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                ],
+      body: Stack(
+        children: [
+          // 🔴 SOLID BACKGROUND GRADIENT MATCHING SCREENSHOT
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [cherryRedLight, cherryRedDark],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
             ),
           ),
-        ),
+
+          SafeArea(
+            child: Center(
+              child: SingleChildScrollView(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 30.0, vertical: 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // 🛒 WHITE LOGO CIRCLE
+                    Container(
+                      padding: const EdgeInsets.all(25),
+                      decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.15),
+                              blurRadius: 20,
+                              offset: const Offset(0, 10),
+                            )
+                          ]),
+                      child: Icon(Icons.shopping_cart,
+                          size: 55, color: cherryRedDark),
+                    ),
+                    const SizedBox(height: 25),
+
+                    // 🏷️ BRAND NAME
+                    const Text("CLICKOUT",
+                        style: TextStyle(
+                            fontFamily: 'DejaVuSansMono',
+                            fontSize: 28,
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            letterSpacing: 6)),
+                    const SizedBox(height: 50),
+
+                    // 🍔 FLOATING MENU + TAGLINES
+                    Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          child: Column(
+                            children: [
+                              const Text("Zero Queue.",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      fontFamily: 'DejaVuSansMono',
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white)),
+                              const SizedBox(height: 8),
+                              const Text("Fastest Checkout.",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      fontFamily: 'DejaVuSansMono',
+                                      fontSize: 30,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white)),
+                              const SizedBox(height: 20),
+                              Text("Login to start shopping",
+                                  style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.white.withOpacity(0.8),
+                                      fontFamily: 'DejaVuSansMono')),
+                            ],
+                          ),
+                        ),
+                        // THE FLOATING LEFT MENU BUTTON
+                        Positioned(
+                          left: -45, // Hugging the left edge
+                          top: 25,
+                          child: InkWell(
+                            onTap: () {
+                              // Support / Contact action here later
+                            },
+                            child: Container(
+                              height: 55,
+                              width: 55,
+                              decoration: BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                  boxShadow: [
+                                    BoxShadow(
+                                        color: Colors.black.withOpacity(0.15),
+                                        blurRadius: 10,
+                                        offset: const Offset(0, 5))
+                                  ]),
+                              child: const Center(
+                                child: Icon(Icons.menu,
+                                    color: Colors.black87, size: 28),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 40),
+
+                    // 📱 INPUT FIELDS
+                    if (!isOtpSent) _buildPhoneInput(),
+                    if (isOtpSent) _buildOtpInput(),
+                    const SizedBox(height: 25),
+
+                    // 🔘 ACTION BUTTON (WHITE BG, RED TEXT)
+                    SizedBox(
+                      width: double.infinity,
+                      height: 60,
+                      child: ElevatedButton(
+                        onPressed: loading
+                            ? null
+                            : (isOtpSent ? _verifyOtp : _sendOtp),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: cherryRedDark,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(15)),
+                          elevation: 5,
+                          shadowColor: Colors.black.withOpacity(0.3),
+                        ),
+                        child: loading
+                            ? CircularProgressIndicator(color: cherryRedDark)
+                            : Text(isOtpSent ? "VERIFY SECURELY" : "GET OTP",
+                                style: const TextStyle(
+                                    fontFamily: 'DejaVuSansMono',
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 2)),
+                      ),
+                    ),
+
+                    // 🔄 RESEND LOGIC UI
+                    if (isOtpSent) ...[
+                      const SizedBox(height: 25),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text("Didn't receive code? ",
+                              style: TextStyle(
+                                  color: Colors.white.withOpacity(0.8))),
+                          GestureDetector(
+                            onTap: _canResend ? _resendOtp : null,
+                            child: Text(
+                                _canResend ? "Resend Now" : "Wait ${_start}s",
+                                style: TextStyle(
+                                    color: _canResend
+                                        ? Colors.white
+                                        : Colors.white54,
+                                    fontWeight: FontWeight.bold,
+                                    decoration: _canResend
+                                        ? TextDecoration.underline
+                                        : TextDecoration.none)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 15),
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            isOtpSent = false;
+                            otpController.clear();
+                            _timer?.cancel();
+                          });
+                        },
+                        child: const Text("Change Mobile Number",
+                            style: TextStyle(
+                                color: Colors.white70,
+                                decoration: TextDecoration.underline)),
+                      )
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
+  // 📞 PHONE INPUT WIDGET
   Widget _buildPhoneInput() {
     return Container(
-      key: const ValueKey('phone'),
+      height: 65,
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.white30),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+          color: Colors.white.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.white.withOpacity(0.4), width: 1)),
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       child: Row(
         children: [
-          const Text('+91',
+          const Text("+91",
               style: TextStyle(
-                  fontFamily: 'DejaVuSansMono',
                   color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold)),
-          const SizedBox(width: 12),
-          Container(height: 24, width: 1, color: Colors.white30),
-          const SizedBox(width: 12),
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'DejaVuSansMono')),
+          const SizedBox(width: 15),
+          Container(width: 1, height: 30, color: Colors.white.withOpacity(0.4)),
+          const SizedBox(width: 15),
           Expanded(
             child: TextField(
               controller: phoneController,
               keyboardType: TextInputType.phone,
-              autofillHints: const [AutofillHints.telephoneNumber],
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               style: const TextStyle(
-                  fontFamily: 'DejaVuSansMono',
                   color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold),
-              cursorColor: Colors.white,
+                  fontSize: 20,
+                  fontFamily: 'DejaVuSansMono',
+                  letterSpacing: 2),
               decoration: InputDecoration(
-                hintText: 'Mobile Number',
+                hintText: 'Phone Number',
                 hintStyle: TextStyle(
-                    color: Colors.white.withOpacity(0.6),
+                    color: Colors.white.withOpacity(0.5),
                     fontFamily: 'DejaVuSansMono'),
                 border: InputBorder.none,
                 counterText: "",
@@ -364,15 +428,16 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
     );
   }
 
+  // 🔑 OTP INPUT WIDGET
   Widget _buildOtpInput() {
     return Container(
+      height: 65,
       key: const ValueKey('otp'),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: Colors.white, width: 2),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
+          color: Colors.white.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.white, width: 2)),
+      padding: const EdgeInsets.symmetric(horizontal: 20),
       child: TextField(
         controller: otpController,
         keyboardType: TextInputType.number,
@@ -389,9 +454,14 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
           hintText: '------',
           hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
           border: InputBorder.none,
-          counterText: "",
         ),
         maxLength: 6,
+        onChanged: (val) {
+          if (val.length == 6) {
+            FocusScope.of(context).unfocus();
+            _verifyOtp();
+          }
+        },
       ),
     );
   }
