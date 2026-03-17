@@ -30,6 +30,10 @@ class PdfInvoiceService {
       Map<String, dynamic> data, String id) async {
     final pdf = pw.Document();
 
+    // Font fix for Rupee Symbol
+    final ttf = await PdfGoogleFonts.robotoRegular();
+    final ttfBold = await PdfGoogleFonts.robotoBold();
+
     DateTime date = DateTime.now();
     if (data['timestamp'] != null) {
       if (data['timestamp'] is Timestamp) {
@@ -48,20 +52,11 @@ class PdfInvoiceService {
         double.tryParse(data['totalAmount']?.toString() ?? '0') ?? 0.0;
     double totalGSTAmount = 0;
     double totalBasePrice = 0;
-
-    // 🧮 SAVINGS CALCULATION FOR PDF
     double totalOriginalMRP = 0;
+    double manualTotalWeight = 0;
 
-    double totalWeight =
-        double.tryParse(data['totalWeight']?.toString() ?? '0') ?? 0.0;
-    String weightDisplay = totalWeight >= 1000
-        ? "${(totalWeight / 1000).toStringAsFixed(2)} KG"
-        : "${totalWeight.toStringAsFixed(0)} g";
-
-    // try catch error handling
     try {
       for (var item in items) {
-        // Find Original Price vs Final Charged Price
         double itemOriginalPrice =
             double.tryParse(item['originalPrice']?.toString() ?? '0') ?? 0.0;
         double itemFinalPrice =
@@ -75,9 +70,22 @@ class PdfInvoiceService {
 
         totalOriginalMRP += (itemOriginalPrice * itemQty);
 
-        double gstRate = item['gst'] != null
-            ? (double.tryParse(item['gst'].toString()) ?? 18.0)
-            : 18.0;
+        // 🔥 THE RESTORED 1:20 PM GST LOGIC
+        double gstRate = 0.0;
+        if (item['gst'] != null && item['gst'].toString().isNotEmpty) {
+          String rawGst =
+              item['gst'].toString().replaceAll(RegExp(r'[^0-9.]'), '');
+          gstRate = double.tryParse(rawGst) ?? 0.0;
+        }
+
+        // 🔥 THE RESTORED 1:20 PM WEIGHT LOGIC (Ultra Safe)
+        double w =
+            double.tryParse(item['total_item_weight']?.toString() ?? '') ??
+                double.tryParse(item['weight_per_unit']?.toString() ?? '') ??
+                double.tryParse(item['weight']?.toString() ?? '0') ??
+                0.0;
+
+        manualTotalWeight += (w * itemQty);
 
         double basePricePerUnit = itemFinalPrice / (1 + (gstRate / 100));
         double totalBaseForLine = basePricePerUnit * itemQty;
@@ -90,17 +98,26 @@ class PdfInvoiceService {
       print("PDF Math Error: $e");
     }
 
+    double dbTotalWeight =
+        double.tryParse(data['totalWeight']?.toString() ?? '0') ?? 0.0;
+    double finalTotalWeight =
+        dbTotalWeight > 0 ? dbTotalWeight : manualTotalWeight;
+
+    String weightDisplay = finalTotalWeight >= 1000
+        ? "${(finalTotalWeight / 1000).toStringAsFixed(2)} KG"
+        : "${finalTotalWeight.toStringAsFixed(0)} g";
+
     double totalSavings = totalOriginalMRP - totalMRP;
-    if (totalSavings < 0) totalSavings = 0; // Fallback
+    if (totalSavings < 0) totalSavings = 0;
 
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
+        theme: pw.ThemeData.withFont(base: ttf, bold: ttfBold),
         build: (pw.Context context) {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // HEADER
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
@@ -116,8 +133,6 @@ class PdfInvoiceService {
               ),
               pw.Divider(),
               pw.SizedBox(height: 10),
-
-              // DETAILS
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
@@ -136,8 +151,6 @@ class PdfInvoiceService {
                 ],
               ),
               pw.SizedBox(height: 20),
-
-              // 📊 TABLE WITH WEIGHT COLUMN
               pw.Table.fromTextArray(
                 context: context,
                 border: null,
@@ -167,17 +180,26 @@ class PdfInvoiceService {
                         double.tryParse(e['quantity']?.toString() ?? '0') ??
                         0.0;
 
-                    double gstRate = e['gst'] != null
-                        ? (double.tryParse(e['gst'].toString()) ?? 18.0)
-                        : 18.0;
+                    // 🔥 THE RESTORED 1:20 PM GST LOGIC
+                    double gstRate = 0.0;
+                    if (e['gst'] != null && e['gst'].toString().isNotEmpty) {
+                      String raw = e['gst']
+                          .toString()
+                          .replaceAll(RegExp(r'[^0-9.]'), '');
+                      gstRate = double.tryParse(raw) ?? 0.0;
+                    }
+
                     double base = (mrp / (1 + (gstRate / 100)));
                     double total = mrp * qty;
                     double gstAmt = total - (base * qty);
 
+                    // 🔥 THE RESTORED 1:20 PM WEIGHT LOGIC
                     double itemWgt = double.tryParse(
                             e['total_item_weight']?.toString() ?? '') ??
                         (double.tryParse(
-                                    e['weight_per_unit']?.toString() ?? '0') ??
+                                    e['weight_per_unit']?.toString() ?? '') ??
+                                double.tryParse(
+                                    e['weight']?.toString() ?? '0') ??
                                 0.0) *
                             qty;
 
@@ -198,8 +220,6 @@ class PdfInvoiceService {
                 ],
               ),
               pw.SizedBox(height: 20),
-
-              // TOTALS WITH SAVINGS
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.end,
                 children: [

@@ -341,7 +341,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  // 🚀 PERFECT DYNAMIC ROUTING
+// 🚀 PERFECT DYNAMIC ROUTING & CART UNLOCKER
   void _placeOrder(CartService cart) async {
     try {
       HapticFeedback.mediumImpact();
@@ -350,20 +350,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
       String modeString = _selectedPayment.name.toUpperCase();
 
+      // Backup state before clearing
+      bool wasCorrection = cart.isCorrectionMode;
+
       final orderId = await OrderService().createOrUpdateOrder(
         items: items,
         totalAmount: orderTotal,
         gstTotal: cart.totalGST,
         paymentMode: modeString,
-        correctionOrderId:
-            cart.correctionOrderId, // 🚀 THE MISSING LINK PASSED TO BACKEND!
+        correctionOrderId: cart.correctionOrderId,
       );
 
       if (mounted) {
         setState(() => _isLoading = false);
 
-        // 🚀 THE FIX: BYPASS PAYMENT SCREENS COMPLETELY IF IT'S A CORRECTION
-        if (cart.isCorrectionMode) {
+        // 🔓 THE MASTER FIX: FREE THE CART!
+        // Order place hote hi correction mode end karo aur cart khali karo
+        cart.exitCorrectionMode();
+
+        if (wasCorrection) {
           Navigator.pushReplacement(
               context,
               MaterialPageRoute(
@@ -372,7 +377,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           return;
         }
 
-        // 🔀 DYNAMIC NAVIGATION BASED ON STATE FOR NORMAL FLOW
+        // 🔀 DYNAMIC NAVIGATION
         if (_selectedPayment == PaymentMethod.upi) {
           Navigator.pushReplacement(
               context,
@@ -387,8 +392,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                       PaymentQRScreen(orderId: orderId, amount: orderTotal)));
         } else {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text(
-                  "Card Payments coming soon! Redirecting to Cash flow...")));
+              content:
+                  Text("Card Payments coming soon! Redirecting to Cash...")));
           Navigator.pushReplacement(
               context,
               MaterialPageRoute(

@@ -369,12 +369,16 @@ class _CartScreenState extends State<CartScreen> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (item.clearanceActive && item.clearanceType == 'PERCENT')
+            if (item.clearanceActive &&
+                (item.clearanceType == 'PERCENT' ||
+                    item.clearanceType == 'FLAT' ||
+                    item.clearanceType == 'COMBO'))
               Text("₹${item.originalPrice.toStringAsFixed(2)}",
                   style: const TextStyle(
                       decoration: TextDecoration.lineThrough,
                       color: Colors.grey,
                       fontSize: 12)),
+
             Text("₹${item.finalUnitPrice.toStringAsFixed(2)}",
                 style: TextStyle(
                     color: item.clearanceActive
@@ -382,12 +386,38 @@ class _CartScreenState extends State<CartScreen> {
                         : primaryColor,
                     fontWeight: FontWeight.bold,
                     fontSize: 14)),
-            if (item.clearanceType == 'BOGO')
-              Text("🎁 You get: ${item.effectiveQty} items",
-                  style: const TextStyle(
-                      color: Colors.orange,
+
+            // 🧠 EXACT BOGO & BUY_X_GET_Y UI MATH
+            Builder(builder: (context) {
+              int comboSize = item.buyQty + item.freeQty;
+              int combos = comboSize > 0 ? (item.quantity ~/ comboSize) : 0;
+              int freeItems = combos * item.freeQty;
+
+              if (freeItems > 0) {
+                if (item.clearanceType == 'BOGO') {
+                  return Text(
+                      "🎁 You get: ${item.quantity} total items (Includes $freeItems Free)",
+                      style: const TextStyle(
+                          color: Colors.orange,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12));
+                } else if (item.clearanceType == 'BUY_X_GET_Y') {
+                  return Text("🎁 FREE: ${freeItems}x ${item.freeProductName}",
+                      style: const TextStyle(
+                          color: Colors.purple,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12));
+                }
+              }
+              return const SizedBox.shrink();
+            }),
+
+            if (item.clearanceType == 'COMBO')
+              const Text("🍔 COMBO DEAL APPLIED",
+                  style: TextStyle(
+                      color: Colors.blueAccent,
                       fontWeight: FontWeight.bold,
-                      fontSize: 12)),
+                      fontSize: 11)),
           ],
         ),
         trailing: Row(

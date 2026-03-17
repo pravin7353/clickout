@@ -8,20 +8,18 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/firestore/firestore_service.dart';
 import '../services/cart/cart_service.dart';
+import '../services/system/store_entry_service.dart';
 
 class ScanProductScreen extends StatefulWidget {
-  const ScanProductScreen({super.key});
+  final bool isEntryMode; // 🚀 NAYA VARIABLE
+  // Default false (Product Scan)
+  const ScanProductScreen({super.key, this.isEntryMode = false});
 
   @override
   State<ScanProductScreen> createState() => _ScanProductScreenState();
 }
 
-enum ScanStatus {
-  idle,
-  success,
-  error,
-  blocked
-} // 🛡️ NEW: 'blocked' status added
+enum ScanStatus { idle, success, error, blocked }
 
 class _ScanProductScreenState extends State<ScanProductScreen>
     with SingleTickerProviderStateMixin {
@@ -40,9 +38,8 @@ class _ScanProductScreenState extends State<ScanProductScreen>
   ScanStatus _scanStatus = ScanStatus.idle;
   DateTime? _lastScanTime;
 
-  // 🛡️ ANTI-SPAM VARIABLES
   bool _isBlocked = false;
-  final List<DateTime> _scanAttempts = []; // Tracks recent scan attempts
+  final List<DateTime> _scanAttempts = [];
 
   final Color cherryRedLight = const Color(0xFFEF5350);
   final Color cherryRedDark = const Color(0xFFC62828);
@@ -59,11 +56,15 @@ class _ScanProductScreenState extends State<ScanProductScreen>
     scannerController.toggleTorch();
   }
 
+  // 🛡️ ULTRA-SMART NUMBER EXTRACTOR (Works for GST%, Weights like 200g, Prices like ₹50)
   double _safeDouble(dynamic value) {
     if (value == null) return 0.0;
     if (value is double) return value;
     if (value is int) return value.toDouble();
-    return double.tryParse(value.toString().trim()) ?? 0.0;
+
+    // Remove everything except numbers and decimals (Automatically handles "12% GST" -> 12.0)
+    String cleanString = value.toString().replaceAll(RegExp(r'[^0-9.]'), '');
+    return double.tryParse(cleanString) ?? 0.0;
   }
 
   int _safeInt(dynamic value) {
@@ -73,7 +74,6 @@ class _ScanProductScreenState extends State<ScanProductScreen>
     return int.tryParse(value.toString().trim()) ?? 0;
   }
 
-  // 🛡️ TRIGGER SPAM BLOCK
   void _triggerSpamBlock() async {
     if (_isBlocked) return;
 
@@ -84,7 +84,7 @@ class _ScanProductScreenState extends State<ScanProductScreen>
     });
 
     await HapticFeedback.heavyImpact();
-    await HapticFeedback.heavyImpact(); // Double vibrate for warning
+    await HapticFeedback.heavyImpact();
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -103,36 +103,29 @@ class _ScanProductScreenState extends State<ScanProductScreen>
       );
     }
 
-    // Unblock after 5 seconds
     await Future.delayed(const Duration(seconds: 5));
     if (mounted) {
       setState(() {
         _isBlocked = false;
         _scanStatus = ScanStatus.idle;
-        _scanAttempts.clear(); // Reset attempts
+        _scanAttempts.clear();
       });
     }
   }
 
-  // 📸 HANDLE SCAN (With Anti-Spam Shield)
   Future<void> _handleScan(String code, CartService cart) async {
     final now = DateTime.now();
-
-    // 1. HARD BLOCK CHECK: Agar pehle se block hai, kuch mat karo
     if (_isBlocked) return;
 
-    // 2. TRACK SPAM ATTEMPTS (Sliding Window of 2 seconds)
     _scanAttempts.add(now);
     _scanAttempts
         .removeWhere((t) => now.difference(t) > const Duration(seconds: 2));
 
-    // 3. ABUSE DETECTION: Agar 2 second mein 4 se zyada baar scan detect hua
     if (_scanAttempts.length >= 4) {
       _triggerSpamBlock();
       return;
     }
 
-    // 4. NORMAL DEBOUNCE (1 Sec pause between normal scans)
     if (_isProcessing ||
         (_lastScanTime != null &&
             now.difference(_lastScanTime!) < const Duration(seconds: 1))) {
@@ -152,6 +145,25 @@ class _ScanProductScreenState extends State<ScanProductScreen>
 
     await Future.delayed(const Duration(milliseconds: 500));
 
+    // 🚀 THE NEW ENTRY MODE LOGIC
+    if (widget.isEntryMode) {
+      // Import StoreEntryService upar
+      bool success = StoreEntryService.parseScannedQR(code);
+      if (success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text("Check-In Successful!"),
+                backgroundColor: Colors.green),
+          );
+          Navigator.pop(context); // Go back to Home
+        }
+      } else {
+        _showErrorDialog("Invalid Store QR");
+      }
+      return; // Stop here, don't look for products
+    }
+
     try {
       final productData = await _firestoreService.getProductByBarcode(code);
 
@@ -160,16 +172,13 @@ class _ScanProductScreenState extends State<ScanProductScreen>
       if (productData != null) {
         bool isUpdate = cart.items.containsKey(code);
 
-        int stock = _safeInt(productData['stock']);
-        int maxQty = _safeInt(productData['maxQtyPerOrder']);
-        if (maxQty == 0) maxQty = 99;
-
         double price = _safeDouble(productData['price']);
         double gst = _safeDouble(productData['gst']);
         double weight = _safeDouble(productData['weight']);
 
         try {
-          cart.add(
+          // 🚀 FIX IS HERE: ADDED 'await' SO ERRORS ARE CAUGHT PROPERLY
+          await cart.add(
             barcode: code,
             name: productData['name'] ?? 'Unknown Item',
             price: price,
@@ -193,22 +202,22 @@ class _ScanProductScreenState extends State<ScanProductScreen>
             _showProductFoundDialog(productData, price);
           }
         } catch (e) {
+          // 🛑 THIS WILL NOW CATCH "DEAD STOCK" PROPERLY
           setState(() => _scanStatus = ScanStatus.error);
           await HapticFeedback.heavyImpact();
 
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
-                content: Text("⚠️ $e"),
+                content: Text("⚠️ $e"), // Shows "DEAD STOCK" or "Out of Stock"
                 backgroundColor: Colors.red,
-                duration: const Duration(seconds: 2),
+                duration: const Duration(seconds: 3),
               ),
             );
           }
 
           await Future.delayed(const Duration(seconds: 1));
           if (mounted && !_isBlocked) {
-            // Ensure we don't clear a block status
             setState(() {
               _isProcessing = false;
               _scanStatus = ScanStatus.idle;
@@ -249,7 +258,7 @@ class _ScanProductScreenState extends State<ScanProductScreen>
         return Colors.greenAccent;
       case ScanStatus.error:
         return Colors.redAccent;
-      case ScanStatus.blocked: // 🔴 Deep Red for blocked state
+      case ScanStatus.blocked:
         return Colors.red;
       case ScanStatus.idle:
         return cherryRedLight;
@@ -304,15 +313,12 @@ class _ScanProductScreenState extends State<ScanProductScreen>
               width: 280,
               decoration: BoxDecoration(
                 border: Border.all(
-                    color: _getBorderColor(),
-                    width:
-                        _isBlocked ? 8 : 4), // Make border thicker if blocked
+                    color: _getBorderColor(), width: _isBlocked ? 8 : 4),
                 borderRadius: BorderRadius.circular(20),
                 boxShadow: [
                   BoxShadow(
                       color: _getBorderColor().withOpacity(0.5),
-                      blurRadius:
-                          _isBlocked ? 40 : 20, // Pulse effect if blocked
+                      blurRadius: _isBlocked ? 40 : 20,
                       spreadRadius: 2)
                 ],
               ),
@@ -336,12 +342,9 @@ class _ScanProductScreenState extends State<ScanProductScreen>
                       child: RotatedBox(
                           quarterTurns: 2,
                           child: _cornerWidget(_getBorderColor()))),
-
-                  // Blocked Icon Overlay
                   if (_isBlocked)
                     const Center(
-                      child: Icon(Icons.block, color: Colors.red, size: 80),
-                    )
+                        child: Icon(Icons.block, color: Colors.red, size: 80))
                 ],
               ),
             ),

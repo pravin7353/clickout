@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // History ke liye
+import 'package:shared_preferences/shared_preferences.dart';
 import '../services/cart/cart_service.dart';
 
 class ProductSearchDelegate extends SearchDelegate {
-  // 🔥 THEME OVERRIDE (Cherry Red AppBar)
   @override
   ThemeData appBarTheme(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     return theme.copyWith(
       appBarTheme: const AppBarTheme(
-        backgroundColor: Color(0xFFC62828), // Cherry Red Dark
+        backgroundColor: Color(0xFFC62828),
         iconTheme: IconThemeData(color: Colors.white),
         elevation: 0,
       ),
@@ -22,52 +21,41 @@ class ProductSearchDelegate extends SearchDelegate {
       ),
       textTheme: theme.textTheme.copyWith(
         titleLarge: const TextStyle(
-          color: Colors.white,
-          fontFamily: 'DejaVuSansMono',
-          fontSize: 18,
-        ),
+            color: Colors.white, fontFamily: 'DejaVuSansMono', fontSize: 18),
       ),
     );
   }
 
-  // 1. ACTIONS (Clear Button)
   @override
   List<Widget>? buildActions(BuildContext context) {
     return [
       if (query.isNotEmpty)
         IconButton(
-          icon: const Icon(Icons.clear, color: Colors.white),
-          onPressed: () {
-            query = '';
-            showSuggestions(context);
-          },
-        ),
+            icon: const Icon(Icons.clear, color: Colors.white),
+            onPressed: () {
+              query = '';
+              showSuggestions(context);
+            }),
     ];
   }
 
-  // 2. LEADING (Back Button)
   @override
   Widget? buildLeading(BuildContext context) {
     return IconButton(
-      icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20),
-      onPressed: () => close(context, null),
-    );
+        icon:
+            const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20),
+        onPressed: () => close(context, null));
   }
 
-  // 3. RESULTS (Jab Enter dabaye ya Suggestion click kare)
   @override
   Widget buildResults(BuildContext context) {
-    // Search hote hi history save karo
     _addToHistory(query);
-
     return _buildProductList(query);
   }
 
-  // 4. SUGGESTIONS (Jab type kare ya box par click kare)
   @override
   Widget buildSuggestions(BuildContext context) {
     if (query.isEmpty) {
-      // Agar box khali hai -> Recent History dikhao
       return FutureBuilder<List<String>>(
         future: _getHistory(),
         builder: (context, snapshot) {
@@ -94,12 +82,10 @@ class ProductSearchDelegate extends SearchDelegate {
         },
       );
     } else {
-      // Agar type kar raha hai -> Live Suggestions dikhao
       return _buildProductList(query);
     }
   }
 
-  // 🔍 SMART PRODUCT LIST BUILDER
   Widget _buildProductList(String searchQuery) {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('products').snapshots(),
@@ -113,20 +99,19 @@ class ProductSearchDelegate extends SearchDelegate {
           return _buildNotFound();
         }
 
-        // 🧠 Smart Filter Logic (Client Side Filtering for Better UX)
-        // Firestore 'contains' support nahi karta easily, isliye hum yahan filter kar rahe hain
         final results = snapshot.data!.docs.where((doc) {
           final data = doc.data() as Map<String, dynamic>;
+          if (data['isBlocked'] == true) {
+            return false; // 🚫 Block Dead Stock from Search UI
+          }
+
           final name = data['name'].toString().toLowerCase();
           final barcode = data['barcode'].toString();
           final searchLower = searchQuery.toLowerCase();
-
           return name.contains(searchLower) || barcode.contains(searchLower);
         }).toList();
 
-        if (results.isEmpty) {
-          return _buildNotFound();
-        }
+        if (results.isEmpty) return _buildNotFound();
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -144,41 +129,30 @@ class ProductSearchDelegate extends SearchDelegate {
                   BoxShadow(
                       color: Colors.black.withOpacity(0.05),
                       blurRadius: 10,
-                      offset: const Offset(0, 4)),
+                      offset: const Offset(0, 4))
                 ],
               ),
               child: ListTile(
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                // Icon Box
                 leading: Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color:
-                        const Color(0xFFEF5350).withOpacity(0.1), // Light Red
-                    borderRadius: BorderRadius.circular(10),
-                  ),
+                      color: const Color(0xFFEF5350).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(10)),
                   child: const Icon(Icons.shopping_bag_outlined,
                       color: Color(0xFFC62828)),
                 ),
-
-                // Name & Price
-                title: Text(
-                  data['name'],
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      fontFamily: 'DejaVuSansMono'),
-                ),
-                subtitle: Text(
-                  "Rs ${data['price']}",
-                  style: const TextStyle(
-                      color: Color(0xFFC62828),
-                      fontWeight: FontWeight.bold,
-                      fontFamily: 'DejaVuSansMono'),
-                ),
-
-                // ADD Button (No Redirect Logic)
+                title: Text(data['name'],
+                    style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        fontFamily: 'DejaVuSansMono')),
+                subtitle: Text("Rs ${data['price']}",
+                    style: const TextStyle(
+                        color: Color(0xFFC62828),
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'DejaVuSansMono')),
                 trailing: SizedBox(
                   width: 80,
                   height: 35,
@@ -190,32 +164,48 @@ class ProductSearchDelegate extends SearchDelegate {
                           borderRadius: BorderRadius.circular(8)),
                       padding: EdgeInsets.zero,
                     ),
-                    onPressed: () {
-                      // 1. Add to Cart
-                      cart.add(
-                        barcode: data['barcode'].toString(),
-                        name: data['name'],
-                        price: double.parse(data['price'].toString()),
-                        gst: double.parse(data['gst'].toString()),
-                        weight: data['weight'] != null
-                            ? double.parse(data['weight'].toString())
-                            : 0.0,
-                      );
+                    onPressed: () async {
+                      try {
+                        // 🛠️ SMART PARSER: Remove letters/symbols from GST string
+                        String rawGst = data['gst'].toString();
+                        String cleanGst =
+                            rawGst.replaceAll(RegExp(r'[^0-9.]'), '');
+                        double finalGst = double.tryParse(cleanGst) ?? 0.0;
 
-                      // 2. Show Success Message (Wahin par rahenge)
-                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            "${data['name']} added to cart!",
-                            style:
-                                const TextStyle(fontFamily: 'DejaVuSansMono'),
+                        await cart.add(
+                          barcode: data['barcode'].toString(),
+                          name: data['name'],
+                          price: double.parse(data['price'].toString()),
+                          gst: finalGst, // 🔥 Now it will safely pass 12.0
+                          weight: data['weight'] != null
+                              ? double.parse(data['weight'].toString())
+                              : 0.0,
+                        );
+
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text("${data['name']} added to cart!",
+                                style: const TextStyle(
+                                    fontFamily: 'DejaVuSansMono')),
+                            backgroundColor: Colors.green,
+                            duration: const Duration(seconds: 1),
+                            behavior: SnackBarBehavior.floating,
                           ),
-                          backgroundColor: Colors.green,
-                          duration: const Duration(seconds: 1),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(e.toString(),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            backgroundColor: Colors.red,
+                            duration: const Duration(seconds: 3),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
                     },
                     child: const Text("ADD",
                         style: TextStyle(
@@ -230,7 +220,6 @@ class ProductSearchDelegate extends SearchDelegate {
     );
   }
 
-  // ❌ EMPTY STATE
   Widget _buildNotFound() {
     return Center(
       child: Column(
@@ -238,19 +227,16 @@ class ProductSearchDelegate extends SearchDelegate {
         children: [
           Icon(Icons.search_off, size: 80, color: Colors.grey[300]),
           const SizedBox(height: 10),
-          Text(
-            "Item not found",
-            style: TextStyle(
-                color: Colors.grey[600],
-                fontFamily: 'DejaVuSansMono',
-                fontSize: 16),
-          ),
+          Text("Item not found",
+              style: TextStyle(
+                  color: Colors.grey[600],
+                  fontFamily: 'DejaVuSansMono',
+                  fontSize: 16)),
         ],
       ),
     );
   }
 
-  // 🕰️ NO HISTORY STATE
   Widget _buildNoRecentHistory() {
     return Center(
       child: Column(
@@ -258,31 +244,21 @@ class ProductSearchDelegate extends SearchDelegate {
         children: [
           Icon(Icons.history, size: 60, color: Colors.grey[300]),
           const SizedBox(height: 10),
-          Text(
-            "No recent searches",
-            style: TextStyle(
-                color: Colors.grey[400], fontFamily: 'DejaVuSansMono'),
-          ),
+          Text("No recent searches",
+              style: TextStyle(
+                  color: Colors.grey[400], fontFamily: 'DejaVuSansMono')),
         ],
       ),
     );
   }
 
-  // 💾 HISTORY LOGIC (Shared Preferences)
   Future<void> _addToHistory(String term) async {
     if (term.isEmpty) return;
     final prefs = await SharedPreferences.getInstance();
     List<String> history = prefs.getStringList('search_history') ?? [];
-
-    // Duplicate hatayein aur top par layein
     history.remove(term);
     history.insert(0, term);
-
-    // Sirf last 10 items rakhein
-    if (history.length > 10) {
-      history = history.sublist(0, 10);
-    }
-
+    if (history.length > 10) history = history.sublist(0, 10);
     await prefs.setStringList('search_history', history);
   }
 

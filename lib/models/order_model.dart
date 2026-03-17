@@ -13,6 +13,8 @@ class OrderModel {
 
   // 🏪 STORE & DEVICE INFO
   final String branchCode;
+  final String tenantId; // 👈 Naya SaaS ID
+  final String storeId; // 👈 Naya SaaS ID
   final String deviceId;
   final String collectedBy;
 
@@ -57,6 +59,8 @@ class OrderModel {
     this.transactionId,
     required this.createdAt,
     required this.branchCode,
+    this.tenantId = '', // 👈 Default empty
+    this.storeId = '', // 👈 Default empty
     required this.deviceId,
     required this.collectedBy,
     required this.paymentStatus,
@@ -91,6 +95,8 @@ class OrderModel {
       'timestamp': FieldValue.serverTimestamp(),
 
       'branchCode': branchCode,
+      'tenantId': tenantId, // 👈 Firebase me bhejne ke liye
+      'storeId': storeId, // 👈 Firebase me bhejne ke liye
       'deviceId': deviceId,
       'collectedBy': collectedBy,
       'paymentStatus': paymentStatus,
@@ -134,6 +140,8 @@ class OrderModel {
       transactionId: data['transactionId'],
       createdAt: (data['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now(),
       branchCode: data['branchCode'] ?? 'MART01',
+      tenantId: data['tenantId'] ?? '', // 👈 Firebase se padhne ke liye
+      storeId: data['storeId'] ?? '', // 👈 Firebase se padhne ke liye
       deviceId: data['deviceId'] ?? 'APP',
       collectedBy: data['collectedBy'] ?? '',
       paymentStatus: data['paymentStatus'] ?? 'PENDING',

@@ -1,5 +1,3 @@
-// lib/services/offers/offer_engine_service.dart
-import 'package:flutter/foundation.dart';
 import '../../models/cart_item.dart';
 
 class OfferCalculationResult {
@@ -17,12 +15,9 @@ class OfferCalculationResult {
 }
 
 class OfferEngineService {
-  // 🚀 MASTER FUNCTION: applyAllOffers
-  // Ab ye har naye type ke offer (BOGO, FLAT, PERCENT) ko handle karega
   static OfferCalculationResult applyAllOffers({
     required Map<String, CartItem> cartItems,
-    required List<Map<String, dynamic>>
-        activeOffers, // Pura product data yahan aayega
+    required List<Map<String, dynamic>> activeOffers,
     required Map<String, int> liveStockLogs,
   }) {
     Map<String, CartItem> processedItems = {};
@@ -32,19 +27,12 @@ class OfferEngineService {
 
     cartItems.forEach((barcode, item) {
       int availableStock = liveStockLogs[barcode] ?? item.quantity;
-
-      // 🛑 STRICT STOCK VALIDATION: Cart Quantity Physical Stock se zyada nahi ho sakti
-      int actualCartQty = item.quantity;
-      if (actualCartQty > availableStock) {
-        actualCartQty = availableStock;
-      }
-
+      int actualCartQty =
+          item.quantity > availableStock ? availableStock : item.quantity;
       int payableQty = actualCartQty;
       double itemFinalUnitPrice = item.originalPrice;
-      String appliedOfferTag = '';
 
-      // 🔍 Find if this product has an active offer from Admin Panel
-      // Admin saves data directly inside the product document, which comes here
+      // 🔍 Find if this product has an active offer
       var productOffer = activeOffers.firstWhere(
         (offer) =>
             (offer['productId'] == barcode || offer['barcode'] == barcode) &&
@@ -52,43 +40,60 @@ class OfferEngineService {
         orElse: () => <String, dynamic>{},
       );
 
-      // Agar data activeOffers list me nahi mila, par item.clearanceActive true hai (Fallback)
+      // Fallback to internal if not found
       if (productOffer.isEmpty && item.clearanceActive) {
         productOffer = {
-          'clearanceType': item.clearanceType ?? 'PERCENT',
-          'clearanceValue': item.clearanceValue ?? 0,
+          'clearanceType': item.clearanceType,
+          'clearanceValue': item.clearanceValue,
+          'buyQty': item.buyQty,
+          'freeQty': item.freeQty,
+          'freeProductId': item.freeProductId,
+          'freeProductName': item.freeProductName,
+          'flatDiscount': item.clearanceValue,
+          'comboPrice': item.comboPrice,
         };
       }
 
-      if (productOffer.isNotEmpty) {
+      // 🛑 THE GHOST KILLER: Agar CartService ne is offer ko DEAD declare kar diya hai
+      if (item.clearanceType == 'DEAD_OFFER') {
+        productOffer = <String, dynamic>{}; // Kill it immediately!
+      }
+
+      bool isActive = productOffer.isNotEmpty;
+
+      if (isActive) {
         String offerType =
             (productOffer['clearanceType'] ?? productOffer['type'] ?? '')
                 .toString()
                 .toUpperCase();
 
         switch (offerType) {
-          // 🟢 CASE 1: BOGO & BUY X GET Y
+          // 🟢 CASE 1: BOGO (SAME ITEM FREE)
           case 'BOGO':
+            int buyQty =
+                int.tryParse(productOffer['buyQty']?.toString() ?? '1') ?? 1;
+            int freeQty =
+                int.tryParse(productOffer['freeQty']?.toString() ?? '1') ?? 1;
+            int comboSize = buyQty + freeQty;
+            int totalCombos = actualCartQty ~/ comboSize;
+            int remainder = actualCartQty % comboSize;
+            payableQty = (totalCombos * buyQty) + remainder;
+            freeItemsCount += (totalCombos * freeQty);
+            break;
+
+          // 🟣 CASE 2: BUY X GET Y (CROSS PRODUCT)
           case 'BUY_X_GET_Y':
             int buyQty =
                 int.tryParse(productOffer['buyQty']?.toString() ?? '1') ?? 1;
             int freeQty =
                 int.tryParse(productOffer['freeQty']?.toString() ?? '1') ?? 1;
-
-            // 🧠 THE BOGO MATH ENGINE
-            int comboSize = buyQty + freeQty;
-            int totalCombos = actualCartQty ~/ comboSize;
-            int remainder = actualCartQty % comboSize;
-
-            payableQty = (totalCombos * buyQty) + remainder;
-            int calculatedFreeQty = totalCombos * freeQty;
-
-            freeItemsCount += calculatedFreeQty;
-            appliedOfferTag =
-                productOffer['clearanceTag'] ?? 'BUY $buyQty GET $freeQty';
+            // X par koi discount nahi milta, paise poore lagte hain!
+            payableQty = actualCartQty;
+            int totalCombos = actualCartQty ~/ buyQty;
+            freeItemsCount += (totalCombos * freeQty);
             break;
 
-          // 🟡 CASE 2: PERCENTAGE DISCOUNT
+          // 🟡 CASE 3: PERCENTAGE
           case 'PERCENT':
             double discountPercent = double.tryParse(
                     productOffer['clearanceValue']?.toString() ?? '0') ??
@@ -97,50 +102,66 @@ class OfferEngineService {
               itemFinalUnitPrice = item.originalPrice -
                   (item.originalPrice * (discountPercent / 100));
             }
-            appliedOfferTag = productOffer['clearanceTag'] ??
-                '${discountPercent.toStringAsFixed(0)}% OFF';
             break;
 
-          // 🔴 CASE 3: FLAT DISCOUNT (₹ OFF)
+          // 🔴 CASE 4: FLAT DISCOUNT
           case 'FLAT':
             double flatDiscount = double.tryParse(
-                    productOffer['flatDiscount']?.toString() ?? '0') ??
+                    productOffer['flatDiscount']?.toString() ??
+                        productOffer['clearanceValue']?.toString() ??
+                        '0') ??
                 0.0;
             itemFinalUnitPrice = item.originalPrice - flatDiscount;
-            if (itemFinalUnitPrice < 0) {
-              itemFinalUnitPrice = 0; // 🛡️ Zero limit protection
-            }
-            appliedOfferTag = productOffer['clearanceTag'] ??
-                '₹${flatDiscount.toStringAsFixed(0)} OFF';
+            if (itemFinalUnitPrice < 0) itemFinalUnitPrice = 0;
             break;
 
-          // 🟣 CASE 4: COMBO / BUNDLE (Basic handling for current item)
+          // 🔵 CASE 5: COMBO
           case 'COMBO':
-            // Custom logic based on bundle size (Advanced Phase)
-            appliedOfferTag = productOffer['clearanceTag'] ?? 'COMBO DEAL';
+            itemFinalUnitPrice = double.tryParse(
+                    productOffer['comboPrice']?.toString() ?? '0') ??
+                item.originalPrice;
             break;
         }
       }
 
-      // 🧮 CALCULATE FINANCIAL TOTALS
       double itemOriginalTotal = item.originalPrice * actualCartQty;
       double itemCalculatedTotal = itemFinalUnitPrice * payableQty;
 
       totalDiscount += (itemOriginalTotal - itemCalculatedTotal);
       finalGrandTotal += itemCalculatedTotal;
 
-      // ✅ REBUILD ITEM SAFELY (Update with calculated math)
       processedItems[barcode] = CartItem(
-          barcode: item.barcode,
-          name: item.name,
-          originalPrice: item.originalPrice,
-          gst: item.gst,
-          weight: item.weight,
-          quantity: actualCartQty, // Updated restricted quantity
-          clearanceActive: productOffer.isNotEmpty,
-          clearanceType: appliedOfferTag, // Using tag for UI display
-          clearanceValue: itemFinalUnitPrice // Safe final unit price
-          );
+        barcode: item.barcode,
+        name: item.name,
+        originalPrice: item.originalPrice,
+        gst: item.gst,
+        weight: item.weight,
+        quantity: actualCartQty,
+        clearanceActive: isActive,
+        // 🔥 UI TYPE PRESERVATION (Tag mat bhejo yahan se, warna UI break ho jayega)
+        clearanceType: isActive
+            ? (productOffer['clearanceType'] ?? item.clearanceType)
+            : '',
+        clearanceValue: isActive ? itemFinalUnitPrice : 0.0,
+        buyQty: isActive
+            ? (int.tryParse(productOffer['buyQty']?.toString() ?? '1') ??
+                item.buyQty)
+            : 1,
+        freeQty: isActive
+            ? (int.tryParse(productOffer['freeQty']?.toString() ?? '0') ??
+                item.freeQty)
+            : 0,
+        freeProductId: isActive
+            ? (productOffer['freeProductId'] ?? item.freeProductId)
+            : '',
+        freeProductName: isActive
+            ? (productOffer['freeProductName'] ?? item.freeProductName)
+            : '',
+        comboPrice: isActive
+            ? (double.tryParse(productOffer['comboPrice']?.toString() ?? '0') ??
+                item.comboPrice)
+            : 0.0,
+      );
     });
 
     return OfferCalculationResult(

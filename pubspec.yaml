@@ -48,6 +48,9 @@ dependencies:
   flutter_local_notifications: ^20.1.0
   firebase_messaging: ^16.1.1
 
+  #Web  
+  universal_html: ^2.3.0  
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

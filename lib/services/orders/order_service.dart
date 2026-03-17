@@ -3,12 +3,11 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import '../security/fraud_detection_service.dart';
+import '../../utils/user_session.dart';
 
 class OrderService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
-
-  // 💉 INJECTED SECURITY SERVICE
   final FraudDetectionService _fraudDetector = FraudDetectionService();
 
   Future<String?> getActiveOrderId(String userId) async {
@@ -58,14 +57,14 @@ class OrderService {
           realEmail = data['email'];
         }
       }
-    } catch (e) {
-      debugPrint("Email fetch error: $e");
-    }
+    } catch (e) {}
 
-    // 🛡️ DELEGATE TO FRAUD DETECTION SERVICE
     final riskProfile = _fraudDetector.evaluateCartRisk(items);
 
-    String? existingId = correctionOrderId ?? await getActiveOrderId(user.uid);
+    // 🛑 THE MASTER FIX 1: Bypass stale pending orders!
+    // Always create a Fresh Gate Pass unless Guard specifically sent it back for correction.
+    String? existingId = correctionOrderId;
+
     DocumentReference orderRef = existingId != null
         ? _db.collection('orders').doc(existingId)
         : _db.collection('orders').doc();
@@ -114,8 +113,6 @@ class OrderService {
       'items': items,
       'totalAmount': finalTotalAmount,
       'gstTotal': finalGstTotal,
-
-      // Data from Risk Profile
       'totalWeight': riskProfile['calculatedTotalWeight'],
       'weightVerifiedAtGate': false,
       'weightMismatchFlag': riskProfile['weightMismatchFlag'],
@@ -124,7 +121,6 @@ class OrderService {
       'weightDifference': riskProfile['weightDiff'],
       'riskLevel': riskProfile['riskLevel'],
       'guardRecommendation': riskProfile['recommendation'],
-
       'paymentMode': paymentMode,
       'status': finalStatus,
       'paymentStatus': finalPaymentStatus,
@@ -133,23 +129,78 @@ class OrderService {
       'isCorrectionMode': existingId != null,
       'gatePassVersion': gatePassVersion,
       'isDeleted': false,
+      'qrConsumed': false,
       'revisionHistory': revisionHistory,
       'timestamp': FieldValue.serverTimestamp(),
       'qrExpiresAt':
           Timestamp.fromDate(DateTime.now().add(const Duration(hours: 8))),
-      'branchCode': 'MART01',
+      // 🚀 THE SAAS INJECTION ENGINE
+      'tenantId': UserSession.tenantId,
+      'storeId': UserSession.storeId,
+      'branchCode': UserSession.branchCode,
     };
+
+    if (existingId != null) {
+      orderData['verifiedAt'] = FieldValue.delete();
+      orderData['verifiedByGuardId'] = FieldValue.delete();
+    }
 
     batch.set(orderRef, orderData, SetOptions(merge: true));
 
+    // ==========================================================
+    // 🚀 THE BULLETPROOF INVENTORY ENGINE (Query Method)
+    // ==========================================================
     if (existingId == null) {
       for (var item in items) {
-        DocumentReference productRef =
-            _db.collection('products').doc(item['barcode']);
-        batch.update(productRef, {
-          'stock':
-              FieldValue.increment(-int.parse((item['qty'] ?? 1).toString()))
-        });
+        String barcode = item['barcode']?.toString() ?? '';
+        if (barcode.isEmpty) continue;
+
+        int qty = int.tryParse(item['quantity']?.toString() ??
+                item['qty']?.toString() ??
+                '1') ??
+            1;
+        String cType = item['clearanceType'] ?? '';
+        int buyQty = int.tryParse(item['buyQty']?.toString() ?? '1') ?? 1;
+        int freeQty = int.tryParse(item['freeQty']?.toString() ?? '0') ?? 0;
+        String freeProductId = item['freeProductId'] ?? '';
+
+        int mainItemDeduction = qty;
+        int crossItemDeduction = 0;
+
+        if (cType == 'BOGO') {
+          int combos = buyQty > 0 ? (qty ~/ buyQty) : 0;
+          mainItemDeduction = qty + (combos * freeQty);
+        } else if (cType == 'BUY_X_GET_Y' && freeProductId.isNotEmpty) {
+          int combos = buyQty > 0 ? (qty ~/ buyQty) : 0;
+          crossItemDeduction = combos * freeQty;
+        }
+
+        // 🛑 THE MASTER FIX 2: Query by Field Name! (Bypasses double-quote string glitches)
+        final pSnap = await _db
+            .collection('products')
+            .where('barcode', isEqualTo: barcode)
+            .limit(1)
+            .get();
+        if (pSnap.docs.isNotEmpty) {
+          batch.update(pSnap.docs.first.reference, {
+            'physicalStock': FieldValue.increment(-mainItemDeduction),
+            'soldStock': FieldValue.increment(mainItemDeduction)
+          });
+        }
+
+        if (crossItemDeduction > 0) {
+          final fSnap = await _db
+              .collection('products')
+              .where('barcode', isEqualTo: freeProductId)
+              .limit(1)
+              .get();
+          if (fSnap.docs.isNotEmpty) {
+            batch.update(fSnap.docs.first.reference, {
+              'physicalStock': FieldValue.increment(-crossItemDeduction),
+              'soldStock': FieldValue.increment(crossItemDeduction)
+            });
+          }
+        }
       }
     }
 

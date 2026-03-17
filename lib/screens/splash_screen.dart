@@ -1,8 +1,10 @@
+// lib/screens/splash_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart'; // ✅ Zaroori hai
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import '../firebase_options.dart'; // ✅ Ye file honi chahiye
+import '../firebase_options.dart';
+import '../services/system/store_entry_service.dart'; // 🚀 IMPORT ADDED
 import 'home_screen.dart';
 import 'login_screen.dart';
 
@@ -16,7 +18,6 @@ class SplashScreen extends StatefulWidget {
 class _SplashScreenState extends State<SplashScreen> {
   String _status = "Starting ClickOut...";
 
-  // 🔥 Cherry Colors
   final Color cherryRedLight = const Color(0xFFEF5350);
   final Color cherryRedDark = const Color(0xFFC62828);
 
@@ -28,10 +29,8 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _startApp() async {
     try {
-      // 1. Thoda wait karo UI load hone ke liye
       await Future.delayed(const Duration(seconds: 1));
 
-      // 2. Firebase Check & Initialize
       if (Firebase.apps.isEmpty) {
         setState(() => _status = "Connecting to Server...");
         await Firebase.initializeApp(
@@ -39,14 +38,15 @@ class _SplashScreenState extends State<SplashScreen> {
         );
       }
 
-      // 3. Auth Check
       setState(() => _status = "Checking User...");
       final user = FirebaseAuth.instance.currentUser;
 
       if (!mounted) return;
 
-      // 4. Navigate
       if (user != null) {
+        // 🚀 THE MAGIC: Check if entering via Web QR Link
+        bool enteredStore = StoreEntryService.checkWebEntryUrl();
+
         Navigator.pushReplacement(
             context, MaterialPageRoute(builder: (_) => const HomeScreen()));
       } else {
@@ -54,7 +54,6 @@ class _SplashScreenState extends State<SplashScreen> {
             context, MaterialPageRoute(builder: (_) => const LoginScreen()));
       }
     } catch (e) {
-      // Agar koi error aaye toh screen par dikhao
       setState(() => _status = "Error: $e");
       print("Splash Error: $e");
     }
@@ -96,8 +95,6 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
             ),
             const SizedBox(height: 50),
-
-            // 👇 Status Text (Humein batayega kya chal raha hai)
             Text(
               _status,
               style: const TextStyle(color: Colors.white70, fontSize: 14),

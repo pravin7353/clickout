@@ -1,15 +1,20 @@
 class CartItem {
   final String barcode;
   final String name;
-  final double originalPrice; // Base price
+  final double originalPrice;
   final double gst;
-  final double weight; // Weight per unit
-  final int quantity; // Scanned Qty
+  final double weight;
+  final int quantity;
 
-  // 🏷️ CLEARANCE METADATA (Naya Engine)
+  // 🎁 OFFER FIELDS (No Math here, just storage)
   final bool clearanceActive;
-  final String? clearanceType; // "PERCENT" or "BOGO"
-  final num? clearanceValue; // 10, 20, 50, or 100
+  final String clearanceType;
+  final int buyQty;
+  final int freeQty;
+  final double clearanceValue;
+  final String freeProductId;
+  final String freeProductName;
+  final double comboPrice;
 
   CartItem({
     required this.barcode,
@@ -19,82 +24,39 @@ class CartItem {
     required this.weight,
     required this.quantity,
     this.clearanceActive = false,
-    this.clearanceType,
-    this.clearanceValue,
+    this.clearanceType = '',
+    this.buyQty = 1,
+    this.freeQty = 0,
+    this.clearanceValue = 0.0,
+    this.freeProductId = '',
+    this.freeProductName = '',
+    this.comboPrice = 0.0,
   });
 
-  // ==========================================
-  // 🧠 THE SMART CART ENGINE (Client-Side Math)
-  // ==========================================
-
-  // 1. FINAL UNIT PRICE (Case A: Percent Discount Logic)
+  // 🚀 ENGINE-DRIVEN PRICING
+  // OfferEngineService sets clearanceValue as the Final Price for FLAT/PERCENT/COMBO
   double get finalUnitPrice {
-    if (clearanceActive &&
-        clearanceType == 'PERCENT' &&
-        clearanceValue != null) {
-      return originalPrice - (originalPrice * (clearanceValue! / 100));
+    if (!clearanceActive) return originalPrice;
+    if (clearanceType == 'BOGO' || clearanceType == 'BUY_X_GET_Y') {
+      return originalPrice;
     }
-    return originalPrice;
+    return clearanceValue > 0 ? clearanceValue : originalPrice;
   }
 
-  // 2. EFFECTIVE QUANTITY (Case B: BOGO Logic - Kitna piece milega?)
-  int get effectiveQty {
-    if (clearanceActive && clearanceType == 'BOGO') {
-      return quantity * 2; // Buy 1 Get 1
-    }
-    return quantity;
-  }
-
-  // 3. PAYABLE QUANTITY (Kitne ka paisa lagega?)
+  // 📦 CALCULATED BY UI LATER
+  double get totalPrice => finalUnitPrice * quantity;
   int get payableQty => quantity;
 
-  // 4. TOTAL PRICE & WEIGHT (Auto Calculates)
-  double get totalPrice => finalUnitPrice * payableQty;
-  double get totalWeight => weight * effectiveQty;
-  int get stockReduce => effectiveQty;
-
-  // 🧠 KALI ENGINE: JSON for Firebase/Invoice (Cloud Sync)
-  Map<String, dynamic> toJson() {
-    return {
-      'barcode': barcode,
-      'name': name,
-      'originalPrice': originalPrice, // 💡 Discounted price in invoice
-      'gst': gst,
-      'weight_per_unit': weight,
-      'total_item_weight': totalWeight,
-      'quantity': quantity,
-      'clearanceActive': clearanceActive,
-      'clearanceType': clearanceType,
-      'clearanceValue': clearanceValue,
-    };
-  }
-
-  // 🛠️ THE MISSING PIECE: Firebase se wapas padhne ke liye!
-  factory CartItem.fromJson(Map<String, dynamic> json) {
-    return CartItem(
-      barcode: json['barcode']?.toString() ?? '',
-      name: json['name']?.toString() ?? 'Unknown Item',
-      originalPrice: double.tryParse(
-              (json['originalPrice'] ?? json['price'] ?? 0.0).toString()) ??
-          0.0,
-      gst: double.tryParse(json['gst']?.toString() ?? '0.0') ?? 0.0,
-      weight: double.tryParse(
-              (json['weight_per_unit'] ?? json['weight'] ?? 0.0).toString()) ??
-          0.0,
-      quantity:
-          int.tryParse((json['quantity'] ?? json['qty'] ?? 1).toString()) ?? 1,
-      clearanceActive: json['clearanceActive'] ?? false,
-      clearanceType: json['clearanceType']?.toString(),
-      clearanceValue: json['clearanceValue'],
-    );
-  }
-
-  // Clone item helper
   CartItem copyWith({
     int? quantity,
     bool? clearanceActive,
     String? clearanceType,
-    num? clearanceValue,
+    double? clearanceValue,
+    int? buyQty,
+    int? freeQty,
+    String? freeProductId,
+    String? freeProductName,
+    double? comboPrice,
   }) {
     return CartItem(
       barcode: barcode,
@@ -105,7 +67,49 @@ class CartItem {
       quantity: quantity ?? this.quantity,
       clearanceActive: clearanceActive ?? this.clearanceActive,
       clearanceType: clearanceType ?? this.clearanceType,
+      buyQty: buyQty ?? this.buyQty,
+      freeQty: freeQty ?? this.freeQty,
       clearanceValue: clearanceValue ?? this.clearanceValue,
+      freeProductId: freeProductId ?? this.freeProductId,
+      freeProductName: freeProductName ?? this.freeProductName,
+      comboPrice: comboPrice ?? this.comboPrice,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+        'barcode': barcode,
+        'name': name,
+        'originalPrice': originalPrice,
+        'gst': gst,
+        'weight': weight,
+        'quantity': quantity,
+        'clearanceActive': clearanceActive,
+        'clearanceType': clearanceType,
+        'buyQty': buyQty,
+        'freeQty': freeQty,
+        'clearanceValue': clearanceValue,
+        'freeProductId': freeProductId,
+        'freeProductName': freeProductName,
+        'comboPrice': comboPrice,
+      };
+
+  factory CartItem.fromJson(Map<String, dynamic> json) => CartItem(
+        barcode: json['barcode'],
+        name: json['name'],
+        originalPrice:
+            double.tryParse(json['originalPrice']?.toString() ?? '0') ?? 0.0,
+        gst: double.tryParse(json['gst']?.toString() ?? '0') ?? 0.0,
+        weight: double.tryParse(json['weight']?.toString() ?? '0') ?? 0.0,
+        quantity: json['quantity'] ?? 1,
+        clearanceActive: json['clearanceActive'] ?? false,
+        clearanceType: json['clearanceType'] ?? '',
+        buyQty: json['buyQty'] ?? 1,
+        freeQty: json['freeQty'] ?? 0,
+        clearanceValue:
+            double.tryParse(json['clearanceValue']?.toString() ?? '0') ?? 0.0,
+        freeProductId: json['freeProductId'] ?? '',
+        freeProductName: json['freeProductName'] ?? '',
+        comboPrice:
+            double.tryParse(json['comboPrice']?.toString() ?? '0') ?? 0.0,
+      );
 }

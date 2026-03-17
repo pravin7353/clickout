@@ -11,6 +11,7 @@ import 'scan_product_screen.dart';
 import 'profile_screen.dart';
 import 'cart_screen.dart';
 import 'order_history_screen.dart';
+import '/utils/user_session.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -527,20 +528,35 @@ class _HomeScreenState extends State<HomeScreen>
               const Spacer(),
 
               // SCAN BUTTON
+              // 🚀 SMART DYNAMIC BUTTON LOGIC
               Column(
                 children: [
-                  const Text("Ready to Checkout?",
-                      style: TextStyle(
+                  Text(
+                      UserSession.storeId.isEmpty
+                          ? "Welcome!"
+                          : "Inside: ${UserSession.branchCode}",
+                      style: const TextStyle(
                           fontSize: 22,
                           fontWeight: FontWeight.bold,
                           color: Colors.black87)),
                   const SizedBox(height: 30),
                   GestureDetector(
                     onTap: () {
-                      Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                              builder: (_) => const ScanProductScreen()));
+                      if (UserSession.storeId.isEmpty) {
+                        // Agar store set nahi hai, toh Entry Scanner kholo
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const ScanProductScreen(
+                                    isEntryMode: true)));
+                      } else {
+                        // Agar store set hai, toh Product Scanner kholo
+                        Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const ScanProductScreen(
+                                    isEntryMode: false)));
+                      }
                     },
                     child: ScaleTransition(
                       scale: _pulseAnimation,
@@ -552,7 +568,9 @@ class _HomeScreenState extends State<HomeScreen>
                           color: Colors.white,
                           boxShadow: [
                             BoxShadow(
-                                color: cherryRedDark.withOpacity(0.25),
+                                color: UserSession.storeId.isEmpty
+                                    ? Colors.orange.withOpacity(0.25)
+                                    : cherryRedDark.withOpacity(0.25),
                                 blurRadius: 30,
                                 spreadRadius: 10,
                                 offset: const Offset(0, 10))
@@ -562,19 +580,31 @@ class _HomeScreenState extends State<HomeScreen>
                           margin: const EdgeInsets.all(10),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
-                            gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [cherryRedLight, cherryRedDark]),
+                            gradient: UserSession.storeId.isEmpty
+                                ? LinearGradient(colors: [
+                                    Colors.orange.shade400,
+                                    Colors.deepOrange
+                                  ])
+                                : LinearGradient(
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                    colors: [cherryRedLight, cherryRedDark]),
                           ),
-                          child: const Column(
+                          child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(Icons.qr_code_scanner_rounded,
-                                  size: 60, color: Colors.white),
-                              SizedBox(height: 8),
-                              Text('SCAN',
-                                  style: TextStyle(
+                              Icon(
+                                  UserSession.storeId.isEmpty
+                                      ? Icons.storefront
+                                      : Icons.qr_code_scanner_rounded,
+                                  size: 60,
+                                  color: Colors.white),
+                              const SizedBox(height: 8),
+                              Text(
+                                  UserSession.storeId.isEmpty
+                                      ? 'CHECK-IN'
+                                      : 'SCAN',
+                                  style: const TextStyle(
                                       fontFamily: 'DejaVuSansMono',
                                       color: Colors.white,
                                       fontWeight: FontWeight.bold,

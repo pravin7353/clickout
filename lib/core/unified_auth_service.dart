@@ -93,7 +93,7 @@ class UnifiedAuthService {
     }
   }
 
-  // 📝 2. MANUAL OTP VERIFICATION
+// 📝 2. MANUAL OTP VERIFICATION
   static Future<void> verifyManualOTP({
     required String verificationId,
     required String otp,
@@ -107,7 +107,7 @@ class UnifiedAuthService {
       );
       UserCredential userCred = await _auth.signInWithCredential(credential);
 
-      await _setupUserSession(userCred); // 🚨 Guard ko ID card do
+      await _setupUserSession(userCred); // 🚨 User details save to Firestore
 
       // Reset limits
       final prefs = await SharedPreferences.getInstance();
@@ -115,8 +115,12 @@ class UnifiedAuthService {
       await prefs.remove('otp_block_${userCred.user?.phoneNumber}');
 
       onSuccess();
+
+      // 🚀 THE FIX: Asli error screen par dikhao!
+    } on FirebaseAuthException catch (e) {
+      onError("Firebase Blocked: ${e.code}");
     } catch (e) {
-      onError("Invalid OTP. Try again.");
+      onError("System Error: $e");
     }
   }
 

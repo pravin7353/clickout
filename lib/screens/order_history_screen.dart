@@ -5,6 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/services.dart';
 import 'order_detail_screen.dart';
 import 'payment_qr_screen.dart';
+import '../../services/system/auto_heal_service.dart';
 
 enum SortType {
   pendingFirst,
@@ -23,6 +24,16 @@ class OrderHistoryScreen extends StatefulWidget {
 
 class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
   SortType _currentSort = SortType.dateLatest;
+
+  @override
+  void initState() {
+    super.initState();
+    // Screen khulte hi background me auto-heal run kar do
+    final String? userId = FirebaseAuth.instance.currentUser?.uid;
+    if (userId != null) {
+      AutoHealService().healCorruptedOrders(userId);
+    }
+  }
 
   void _cycleSort() {
     setState(() {
@@ -44,55 +55,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
           break;
       }
     });
-  }
-
-  void _confirmDeleteOrder(String orderId, Color cherryRedDark) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Row(children: [
-          Icon(Icons.warning_amber_rounded, color: Colors.red),
-          SizedBox(width: 10),
-          Text("Hide Order?", style: TextStyle(fontWeight: FontWeight.bold))
-        ]),
-        content: const Text(
-            "This will remove the order from your Live History view.\n(Forensic records cannot be deleted)."),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child:
-                  const Text("Cancel", style: TextStyle(color: Colors.grey))),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-                backgroundColor: cherryRedDark,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10))),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              try {
-                await FirebaseFirestore.instance
-                    .collection('orders')
-                    .doc(orderId)
-                    .update({
-                  'isDeleted': true,
-                  'deletedAt': FieldValue.serverTimestamp(),
-                });
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                    content: Text("Order hidden from Live History"),
-                    behavior: SnackBarBehavior.floating));
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                    content: Text("Error: $e"), backgroundColor: Colors.red));
-              }
-            },
-            child: const Text("Hide", style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -245,7 +207,7 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
 
                         final allOrders = snapshot.data!.docs;
 
-                        // 🟢 LAYER A: LIVE & HISTORY (BULLETPROOF FIX)
+                        // 🟢 LAYER A: LIVE & HISTORY
                         var liveOrders = allOrders.where((doc) {
                           final data = doc.data() as Map<String, dynamic>;
                           String exitStatus = (data['exitStatus'] ?? '')
@@ -260,7 +222,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                           bool isExpired = expiresAt != null &&
                               DateTime.now().isAfter(expiresAt);
 
-                          // 🚨 STRICT RULE: Rejected orders CANNOT be hidden from live!
                           if (exitStatus == 'REJECTED') return true;
 
                           bool isCleanExit = (exitStatus == 'COMPLETED' ||
@@ -274,7 +235,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                           if (data['isDeleted'] == true && !isActivePending) {
                             return false;
                           }
-
                           if (isCleanExit) return true;
                           if (isExpired) return false;
                           if (payStatus == 'REFUNDED') return false;
@@ -301,7 +261,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                           bool isCleanExit = (exitStatus == 'COMPLETED' ||
                               exitStatus == 'APPROVED' ||
                               exitStatus == 'EXITED');
-
                           bool isActivePending = (payStatus == 'PENDING' ||
                                   exitStatus == 'PENDING' ||
                                   exitStatus == 'READY_FOR_EXIT') &&
@@ -309,7 +268,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                               exitStatus != 'REJECTED';
 
                           if (isActivePending) return false;
-
                           if (!isCleanExit && isExpired) return true;
                           if (isCleanExit && wasEverRejected) return true;
                           if (payStatus == 'REFUNDED') return true;
@@ -425,6 +383,8 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
 
         DateTime? expiresAt = (data['qrExpiresAt'] as Timestamp?)?.toDate();
         bool isExpired = expiresAt != null && DateTime.now().isAfter(expiresAt);
+
+        // 🚀 PURE LOGIC (No Fakes)
         bool isCleanExit = (exitStatus == 'COMPLETED' ||
             exitStatus == 'APPROVED' ||
             exitStatus == 'EXITED');
@@ -452,30 +412,25 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
             displayIcon = Icons.qr_code_2;
           }
         } else if (payStatus == 'PAID' &&
-            (exitStatus == 'PENDING' || exitStatus == 'READY_FOR_EXIT')) {
+            (exitStatus == 'READY_FOR_EXIT' || exitStatus == 'PENDING')) {
           displayStatus = "NEW GATE PASS GENERATED";
           displayColor = Colors.blue;
           displayIcon = Icons.qr_code_scanner;
         } else if (isCleanExit) {
-          if (wasEverRejected) {
-            displayStatus = "FIXED & EXITED";
-            displayColor = Colors.teal;
-            displayIcon = Icons.build_circle;
-          } else {
-            displayStatus = "CLEAR EXIT";
-            displayColor = Colors.green;
-            displayIcon = Icons.check_circle;
-          }
-        } else if (payStatus == 'PAID') {
-          displayStatus = "PAYMENT VERIFIED";
-          displayColor = Colors.blue;
-          displayIcon = Icons.qr_code_scanner;
+          displayStatus = wasEverRejected ? "FIXED & EXITED" : "CLEAR EXIT";
+          displayColor = wasEverRejected ? Colors.teal : Colors.green;
+          displayIcon =
+              wasEverRejected ? Icons.build_circle : Icons.check_circle;
         }
 
         void handleTap() {
-          if (payStatus == 'PENDING' &&
-              exitStatus != 'REJECTED' &&
-              !isExpired) {
+          // If it needs a Guard scan (Pending or Paid but not exited), show QR!
+          if ((payStatus == 'PENDING' &&
+                  exitStatus != 'REJECTED' &&
+                  !isExpired) ||
+              (payStatus == 'PAID' &&
+                  (exitStatus == 'READY_FOR_EXIT' ||
+                      exitStatus == 'PENDING'))) {
             Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -496,7 +451,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
             padding: const EdgeInsets.all(18),
             decoration: isBlackBox
                 ? BoxDecoration(
-                    // 🚀 THE FIX: FUTURISTIC BLACKBOX DESIGN
                     color: Colors.black,
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
@@ -510,7 +464,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                     ],
                   )
                 : BoxDecoration(
-                    // LIVE & HISTORY NORMAL DESIGN
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
@@ -566,8 +519,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                                 letterSpacing: 0.5,
                                 fontWeight: FontWeight.bold)),
                       ),
-
-                      // 🛡️ FORENSIC LOG INJECTORS
                       if (isBlackBox && !isCleanExit && isExpired)
                         const Padding(
                             padding: EdgeInsets.only(top: 8.0),
@@ -588,7 +539,6 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                     ],
                   ),
                 ),
-                // 🚀 THE FIX: NO DELETE BUTTON IN MENU EVER
                 PopupMenuButton<String>(
                   icon: Icon(Icons.more_vert,
                       color: isBlackBox ? Colors.white54 : Colors.grey),
