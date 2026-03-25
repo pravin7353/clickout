@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // 🚀 F-22 RAPTOR IMPORT FOR SYSTEM EXIT
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -30,13 +30,10 @@ class _HomeScreenState extends State<HomeScreen>
   final Color cherryRedLight = const Color(0xFFEF5350);
   final Color cherryRedDark = const Color(0xFFC62828);
 
-  // 🎞️ DYNAMIC SLIDESHOW VARIABLES
   int _currentSlideIndex = 0;
   Timer? _slideTimer;
-  StreamSubscription<QuerySnapshot>?
-      _offerSubscription; // 👈 Live listener for offers
+  StreamSubscription<QuerySnapshot>? _offerSubscription;
 
-  // Ye aapke purane static slides hain
   final List<Map<String, dynamic>> _staticSlides = [
     {
       "title": "Start Shopping",
@@ -64,7 +61,6 @@ class _HomeScreenState extends State<HomeScreen>
     },
   ];
 
-  // Ye wo list hai jo actual me screen par dikhegi (Live Offers + Static)
   List<Map<String, dynamic>> _activeSlides = [];
 
   @override
@@ -79,10 +75,7 @@ class _HomeScreenState extends State<HomeScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    // Initialize with static slides first
     _activeSlides = List.from(_staticSlides);
-
-    // 🚀 Start the Offer Engine!
     _setupOfferStream();
 
     _slideTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
@@ -97,12 +90,13 @@ class _HomeScreenState extends State<HomeScreen>
     _checkLocationPermission();
   }
 
-  // 🧠 THE REAL-TIME OFFER ENGINE (Alternate Pattern Logic)
   void _setupOfferStream() {
     _offerSubscription = FirebaseFirestore.instance
         .collection('products')
+        .where('tenantId', isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+        .where('storeId', isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
         .where('clearanceActive', isEqualTo: true)
-        .limit(5) // Thode zyada offers uthate hain taaki alternate kar sakein
+        .limit(5)
         .snapshots()
         .listen((snapshot) {
       if (!mounted) return;
@@ -113,23 +107,20 @@ class _HomeScreenState extends State<HomeScreen>
         offerSlides.add({
           "title": data['name'] ?? "Special Offer",
           "subtitle": data['clearanceTag'] ?? "Great discount inside!",
-          "icon": Icons.local_fire_department, // Hot offer icon
+          "icon": Icons.local_fire_department,
           "isOffer": true,
         });
       }
 
-      // 🔄 ALTERNATE MERGE LOGIC (Normal -> Offer -> Normal -> Offer...)
       List<Map<String, dynamic>> mergedSlides = [];
       int offerIndex = 0;
       for (int i = 0; i < _staticSlides.length; i++) {
-        mergedSlides.add(_staticSlides[i]); // Add Normal slide
-        // Agar offer available hai, toh normal ke baad ek offer ghusa do
+        mergedSlides.add(_staticSlides[i]);
         if (offerIndex < offerSlides.length) {
           mergedSlides.add(offerSlides[offerIndex]);
           offerIndex++;
         }
       }
-      // Agar aur offers bache hain, toh end mein laga do
       while (offerIndex < offerSlides.length) {
         mergedSlides.add(offerSlides[offerIndex]);
         offerIndex++;
@@ -137,7 +128,7 @@ class _HomeScreenState extends State<HomeScreen>
 
       setState(() {
         _activeSlides = mergedSlides;
-        _currentSlideIndex = 0; // Reset timer safely
+        _currentSlideIndex = 0;
       });
     });
   }
@@ -153,7 +144,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     _pulseController.dispose();
     _slideTimer?.cancel();
-    _offerSubscription?.cancel(); // Memory leak roko!
+    _offerSubscription?.cancel();
     super.dispose();
   }
 
@@ -163,7 +154,6 @@ class _HomeScreenState extends State<HomeScreen>
     });
   }
 
-  // 🧱 THE GREAT WALL: EXIT CONFIRMATION DIALOG
   Future<bool?> _showExitDialog() {
     return showDialog<bool>(
       context: context,
@@ -202,6 +192,83 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
+  Future<bool?> _showSmartStoreExitDialog(int cartItemsCount) {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.warning_rounded, color: Colors.red, size: 28),
+            const SizedBox(width: 10),
+            const Text("Exit Store?",
+                style:
+                    TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (cartItemsCount > 0) ...[
+              const Text("ARE YOU SURE YOU WANT TO EXIT?",
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.red.shade200)),
+                child: Text(
+                    "If you exit now, all $cartItemsCount items in your cart WILL BE WIPED OUT.",
+                    style: TextStyle(
+                        color: Colors.red.shade800,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ] else ...[
+              const Text("Are you sure you want to exit this store session?",
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.green.shade200)),
+                child: const Text(
+                    "Note: Your paid Gate Passes are safe and can be accessed from the History section.",
+                    style: TextStyle(
+                        color: Colors.green,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ]
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("CANCEL",
+                style:
+                    TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("YES, EXIT",
+                style: TextStyle(
+                    color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Widget> pages = [
@@ -210,31 +277,26 @@ class _HomeScreenState extends State<HomeScreen>
       const ProfileScreen()
     ];
 
-    // 🛡️ POPSCOPE: BORDER CONTROL FOR THE BACK BUTTON
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (bool didPop, Object? result) async {
         if (didPop) return;
 
         if (_selectedIndex != 0) {
-          // If in Cart or Profile, go back to Home first
           setState(() {
             _selectedIndex = 0;
           });
           return;
         }
 
-        // If on Home, show the Wall Dialog
         final bool shouldPop = await _showExitDialog() ?? false;
         if (shouldPop) {
-          SystemNavigator.pop(); // Kills the app beautifully
+          SystemNavigator.pop();
         }
       },
       child: Scaffold(
         backgroundColor: const Color(0xFFF4F6F8),
         body: pages[_selectedIndex],
-
-        // 🦶 BOTTOM BAR
         bottomNavigationBar: Container(
           decoration: BoxDecoration(
             color: Colors.white,
@@ -307,9 +369,7 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // 🍒 HOME UI
   Widget _buildCherryHomeBody() {
-    // 💡 Safely handle dynamic slide data
     Map<String, dynamic> currentSlideData = _activeSlides.isNotEmpty
         ? _activeSlides[_currentSlideIndex]
         : _staticSlides[0];
@@ -339,7 +399,6 @@ class _HomeScreenState extends State<HomeScreen>
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // NAME SECTION
                     StreamBuilder<DocumentSnapshot>(
                       stream: FirebaseFirestore.instance
                           .collection('users')
@@ -387,8 +446,6 @@ class _HomeScreenState extends State<HomeScreen>
                         );
                       },
                     ),
-
-                    // 🔍 SEARCH BUTTON
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
@@ -423,15 +480,12 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               const SizedBox(height: 30),
-
-// 🎞️ THE SMART DYNAMIC SLIDESHOW (Cheerful UI Upgrade)
               Container(
-                height: 90, // Thoda bada container
+                height: 90,
                 margin: const EdgeInsets.symmetric(horizontal: 24),
                 padding:
                     const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
                 decoration: BoxDecoration(
-                  // Agar Offer hai toh Gold/Orange Gradient, nahi toh clean white
                   gradient: isOffer
                       ? LinearGradient(colors: [
                           Colors.orange.shade100,
@@ -439,19 +493,16 @@ class _HomeScreenState extends State<HomeScreen>
                         ], begin: Alignment.topLeft, end: Alignment.bottomRight)
                       : const LinearGradient(
                           colors: [Colors.white, Colors.white]),
-                  borderRadius:
-                      BorderRadius.circular(25), // Zyada rounded corners
+                  borderRadius: BorderRadius.circular(25),
                   border: isOffer
-                      ? Border.all(
-                          color: Colors.orange.shade400,
-                          width: 2) // Offer par mota orange border
+                      ? Border.all(color: Colors.orange.shade400, width: 2)
                       : Border.all(color: Colors.white, width: 0),
                   boxShadow: [
                     BoxShadow(
                         color: isOffer
                             ? Colors.orange.withOpacity(0.4)
                             : Colors.black.withOpacity(0.08),
-                        blurRadius: isOffer ? 25 : 15, // Offer par zyada glow
+                        blurRadius: isOffer ? 25 : 15,
                         spreadRadius: isOffer ? 2 : 0,
                         offset: const Offset(0, 8))
                   ],
@@ -460,7 +511,6 @@ class _HomeScreenState extends State<HomeScreen>
                   duration: const Duration(milliseconds: 500),
                   transitionBuilder:
                       (Widget child, Animation<double> animation) {
-                    // Thoda bounce effect transition ke liye
                     return ScaleTransition(
                         scale: animation,
                         child:
@@ -469,7 +519,6 @@ class _HomeScreenState extends State<HomeScreen>
                   child: Row(
                     key: ValueKey<int>(_currentSlideIndex),
                     children: [
-                      // ICON CONTAINER
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -492,7 +541,6 @@ class _HomeScreenState extends State<HomeScreen>
                             size: 28),
                       ),
                       const SizedBox(width: 18),
-                      // TEXT SECTION
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -500,7 +548,7 @@ class _HomeScreenState extends State<HomeScreen>
                           children: [
                             Text(currentSlideData['title'],
                                 style: TextStyle(
-                                    fontWeight: FontWeight.w900, // Zyada bold
+                                    fontWeight: FontWeight.w900,
                                     fontSize: 17,
                                     color: isOffer
                                         ? Colors.brown.shade800
@@ -526,31 +574,81 @@ class _HomeScreenState extends State<HomeScreen>
                 ),
               ),
               const Spacer(),
-
-              // SCAN BUTTON
-              // 🚀 SMART DYNAMIC BUTTON LOGIC
               Column(
                 children: [
-                  Text(
-                      UserSession.storeId.isEmpty
-                          ? "Welcome!"
-                          : "Inside: ${UserSession.branchCode}",
-                      style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87)),
+                  if (UserSession.storeId.isEmpty)
+                    const Text("Welcome!",
+                        style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87))
+                  else
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(30),
+                          border: Border.all(color: Colors.grey.shade300),
+                          boxShadow: [
+                            BoxShadow(
+                                color: Colors.black.withOpacity(0.05),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4))
+                          ]),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.storefront,
+                              color: cherryRedDark, size: 22),
+                          const SizedBox(width: 8),
+                          Text(UserSession.branchCode,
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87)),
+                          const SizedBox(width: 16),
+                          GestureDetector(
+                            onTap: () async {
+                              int currentCartItems =
+                                  context.read<CartService>().totalItems;
+
+                              bool? confirmExit =
+                                  await _showSmartStoreExitDialog(
+                                      currentCartItems);
+
+                              if (confirmExit == true) {
+                                await UserSession.clearSession();
+                                if (context.mounted) {
+                                  context.read<CartService>().clearCart();
+                                }
+                                setState(() {});
+                              }
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                  color: Colors.red.shade50,
+                                  shape: BoxShape.circle,
+                                  border:
+                                      Border.all(color: Colors.red.shade200)),
+                              child: const Icon(Icons.logout_rounded,
+                                  color: Colors.red, size: 18),
+                            ),
+                          )
+                        ],
+                      ),
+                    ),
                   const SizedBox(height: 30),
                   GestureDetector(
                     onTap: () {
                       if (UserSession.storeId.isEmpty) {
-                        // Agar store set nahi hai, toh Entry Scanner kholo
                         Navigator.push(
                             context,
                             MaterialPageRoute(
                                 builder: (_) => const ScanProductScreen(
                                     isEntryMode: true)));
                       } else {
-                        // Agar store set hai, toh Product Scanner kholo
                         Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -618,8 +716,6 @@ class _HomeScreenState extends State<HomeScreen>
                 ],
               ),
               const Spacer(),
-
-              // HISTORY BUTTON
               Container(
                 width: double.infinity,
                 margin:

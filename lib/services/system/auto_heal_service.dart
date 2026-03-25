@@ -1,6 +1,7 @@
 // lib/services/system/auto_heal_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../../utils/user_session.dart'; // 🚀 SAAS INJECTION IMPORT
 
 class AutoHealService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -12,6 +13,8 @@ class AutoHealService {
       final snapshot = await _db
           .collection('orders')
           .where('userId', isEqualTo: userId)
+          .where('tenantId',
+              isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
           .get();
 
       WriteBatch batch = _db.batch();

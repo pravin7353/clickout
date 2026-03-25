@@ -15,6 +15,9 @@ class OrderService {
       final snapshot = await _db
           .collection('orders')
           .where('userId', isEqualTo: userId)
+          .where('tenantId',
+              isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+          .where('storeId', isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
           .orderBy('timestamp', descending: true)
           .limit(1)
           .get();
@@ -179,6 +182,10 @@ class OrderService {
         final pSnap = await _db
             .collection('products')
             .where('barcode', isEqualTo: barcode)
+            .where('tenantId',
+                isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+            .where('storeId',
+                isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
             .limit(1)
             .get();
         if (pSnap.docs.isNotEmpty) {

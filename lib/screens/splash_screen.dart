@@ -1,12 +1,12 @@
-// lib/screens/splash_screen.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../firebase_options.dart';
-import '../services/system/store_entry_service.dart'; // 🚀 IMPORT ADDED
+import '../services/system/store_entry_service.dart';
 import 'home_screen.dart';
 import 'login_screen.dart';
+import '../utils/user_session.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -41,12 +41,14 @@ class _SplashScreenState extends State<SplashScreen> {
       setState(() => _status = "Checking User...");
       final user = FirebaseAuth.instance.currentUser;
 
+      // 🚀 THE FIX: Purana session wapas laao!
+      await UserSession.restoreSession();
+
       if (!mounted) return;
 
       if (user != null) {
         // 🚀 THE MAGIC: Check if entering via Web QR Link
-        bool enteredStore = StoreEntryService.checkWebEntryUrl();
-
+        StoreEntryService.checkWebEntryUrl();
         Navigator.pushReplacement(
             context, MaterialPageRoute(builder: (_) => const HomeScreen()));
       } else {
@@ -55,7 +57,7 @@ class _SplashScreenState extends State<SplashScreen> {
       }
     } catch (e) {
       setState(() => _status = "Error: $e");
-      print("Splash Error: $e");
+      debugPrint("Splash Error: $e");
     }
   }
 

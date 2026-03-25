@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/cart/cart_service.dart';
+import '../utils/user_session.dart'; // 🚀 SAAS INJECTION IMPORT
 
 class ProductSearchDelegate extends SearchDelegate {
   @override
@@ -88,7 +89,12 @@ class ProductSearchDelegate extends SearchDelegate {
 
   Widget _buildProductList(String searchQuery) {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('products').snapshots(),
+      // 🚀 THE SAAS FIX: Search ONLY in the current store's inventory
+      stream: FirebaseFirestore.instance
+          .collection('products')
+          .where('tenantId', isEqualTo: UserSession.tenantId)
+          .where('storeId', isEqualTo: UserSession.storeId)
+          .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
@@ -166,7 +172,6 @@ class ProductSearchDelegate extends SearchDelegate {
                     ),
                     onPressed: () async {
                       try {
-                        // 🛠️ SMART PARSER: Remove letters/symbols from GST string
                         String rawGst = data['gst'].toString();
                         String cleanGst =
                             rawGst.replaceAll(RegExp(r'[^0-9.]'), '');
@@ -176,7 +181,7 @@ class ProductSearchDelegate extends SearchDelegate {
                           barcode: data['barcode'].toString(),
                           name: data['name'],
                           price: double.parse(data['price'].toString()),
-                          gst: finalGst, // 🔥 Now it will safely pass 12.0
+                          gst: finalGst,
                           weight: data['weight'] != null
                               ? double.parse(data['weight'].toString())
                               : 0.0,

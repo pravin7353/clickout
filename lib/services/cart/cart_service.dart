@@ -7,8 +7,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../models/cart_item.dart';
 import '../orders/order_service.dart';
-import '../inventory/inventory_service.dart';
 import 'cart_validator_service.dart';
+import '../../utils/user_session.dart'; // 🚀 SAAS INJECTION IMPORT
 
 class CartService extends ChangeNotifier {
   Map<String, CartItem> _items = {};
@@ -17,7 +17,6 @@ class CartService extends ChangeNotifier {
   SharedPreferences? _prefs;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  final InventoryService _inventoryService = InventoryService();
   final CartValidatorService _validatorService = CartValidatorService();
 
   bool _isCorrectionMode = false;
@@ -45,7 +44,6 @@ class CartService extends ChangeNotifier {
     });
   }
 
-  // 🛡️ --- LIVE DATA FETCH & STRICT INVENTORY GUARD --- 🛡️
   Future<void> add(
       {required String barcode,
       required String name,
@@ -57,12 +55,13 @@ class CartService extends ChangeNotifier {
     final snap = await _db
         .collection('products')
         .where('barcode', isEqualTo: barcode)
+        .where('tenantId', isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+        .where('storeId', isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
         .limit(1)
         .get(const GetOptions(source: Source.server));
     if (snap.docs.isEmpty) throw "Item not found in database!";
     final pData = snap.docs.first.data();
 
-    // 🛑 1. DEAD STOCK HARD BLOCK
     if (pData['isBlocked'] == true) {
       throw "🚫 DEAD STOCK: Item is currently blocked and cannot be sold.";
     }
@@ -76,7 +75,6 @@ class CartService extends ChangeNotifier {
     int liveStock = pData['physicalStock'] ?? pData['stock'] ?? 0;
     if (liveStock <= 0) throw "Item Out of Stock!";
 
-    // 🎁 BASIC EXTRACTION
     bool cActive = pData['clearanceActive'] == true;
     String cType = cActive ? (pData['clearanceType'] ?? '') : '';
     int bQty = 1;
@@ -98,11 +96,14 @@ class CartService extends ChangeNotifier {
         fId = pData['freeProductId'] ?? '';
         fName = pData['freeProductName'] ?? '';
 
-        // 🚀 THE FIX: CROSS-PRODUCT DEPENDENCY CHECK
         if (fId.isNotEmpty) {
           final ySnap = await _db
               .collection('products')
               .where('barcode', isEqualTo: fId)
+              .where('tenantId',
+                  isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+              .where('storeId',
+                  isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
               .limit(1)
               .get(const GetOptions(source: Source.server));
           if (ySnap.docs.isEmpty ||
@@ -113,7 +114,7 @@ class CartService extends ChangeNotifier {
                       .toDate()
                       .isBefore(DateTime.now()))) {
             cActive = false;
-            cType = 'DEAD_OFFER'; // Signal Engine to kill it
+            cType = 'DEAD_OFFER';
           }
         }
       }
@@ -181,6 +182,8 @@ class CartService extends ChangeNotifier {
     final snap = await _db
         .collection('products')
         .where('barcode', isEqualTo: barcode)
+        .where('tenantId', isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+        .where('storeId', isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
         .limit(1)
         .get(const GetOptions(source: Source.server));
     if (snap.docs.isEmpty) return;
@@ -229,6 +232,17 @@ class CartService extends ChangeNotifier {
     notifyListeners();
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) _clearStorage(user.uid);
+  }
+
+  Future<void> clearCart() async {
+    _items.clear();
+    _clearCorrectionState();
+    notifyListeners();
+
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      await _clearStorage(user.uid);
+    }
   }
 
   Future<void> _clearStorage(String uid) async {
@@ -351,13 +365,11 @@ class CartService extends ChangeNotifier {
               Map<String, int>.from(data['correctionOriginalQty']);
         }
 
-        // 🚑 AUTO-RECOVERY HATCH (Removes the trapped bug)
         if (_isCorrectionMode && _correctionOrderId != null) {
           var oSnap =
               await _db.collection('orders').doc(_correctionOrderId).get();
           if (oSnap.exists) {
             var oData = oSnap.data() as Map<String, dynamic>;
-            // Check if the order is actually done
             if (oData['qrConsumed'] == true ||
                 oData['exitStatus'] == 'EXITED' ||
                 oData['exitStatus'] == 'APPROVED') {
@@ -365,7 +377,7 @@ class CartService extends ChangeNotifier {
               _isCorrectionMode = false;
               _correctionOrderId = null;
               _correctionOriginalQty = {};
-              cloudItems = []; // Wipe the stuck items
+              cloudItems = [];
               _items = {};
               await _clearStorage(uid);
             }
@@ -392,7 +404,9 @@ class CartService extends ChangeNotifier {
         CartItem item = CartItem.fromJson(itemJson);
         _items[item.barcode] = item;
       }
-    } catch (e) {}
+    } catch (e) {
+      debugPrint("Cart Ignore Error: $e");
+    }
   }
 
   Future<void> _saveCart() async {
@@ -410,7 +424,12 @@ class CartService extends ChangeNotifier {
         'correctionOrderId': _correctionOrderId,
         'correctionOriginalQty': _correctionOriginalQty,
         'lastUpdated': FieldValue.serverTimestamp(),
+        'tenantId': UserSession.tenantId, // 🚀 SAAS INJECTION
+        'storeId': UserSession.storeId, // 🚀 SAAS INJECTION
+        'branchCode': UserSession.branchCode, // 🚀 SAAS INJECTION
       });
-    } catch (e) {}
+    } catch (e) {
+      debugPrint("Cart Ignore Error: $e");
+    }
   }
 }

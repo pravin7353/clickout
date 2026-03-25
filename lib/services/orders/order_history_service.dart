@@ -1,6 +1,7 @@
 // lib/services/orders/order_history_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import '../../utils/user_session.dart';
 
 class OrderHistoryService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -12,6 +13,8 @@ class OrderHistoryService {
       final snapshot = await _db
           .collection('orders')
           .where('userId', isEqualTo: userId)
+          .where('tenantId',
+              isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
           .where('paymentStatus', isEqualTo: 'PAID')
           .orderBy('timestamp', descending: true)
           .limit(20) // Limit for pagination/performance

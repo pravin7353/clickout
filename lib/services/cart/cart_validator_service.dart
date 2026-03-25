@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../models/cart_item.dart';
+import '../../utils/user_session.dart'; // 🚀 SAAS INJECTION IMPORT
 
 class CartValidatorService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -24,6 +25,10 @@ class CartValidatorService {
         final snap = await _db
             .collection('products')
             .where('barcode', isEqualTo: barcode)
+            .where('tenantId',
+                isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+            .where('storeId',
+                isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
             .limit(1)
             .get();
 
@@ -87,12 +92,15 @@ class CartValidatorService {
         }
 
         // 👻 5. CROSS-PRODUCT VALIDATION (THE GHOST KILLER)
-        // Agar Tata Salt par offer hai, check karo Mushroom zinda hai ya nahi
         if (cActive && cType == 'BUY_X_GET_Y') {
           if (fId.isNotEmpty) {
             final ySnap = await _db
                 .collection('products')
                 .where('barcode', isEqualTo: fId)
+                .where('tenantId',
+                    isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+                .where('storeId',
+                    isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
                 .limit(1)
                 .get();
 
@@ -104,8 +112,7 @@ class CartValidatorService {
                         .toDate()
                         .isBefore(DateTime.now()))) {
               cActive = false;
-              cType =
-                  'DEAD_OFFER'; // Ye engine ko signal dega offer cancel karne ka
+              cType = 'DEAD_OFFER';
               warnings.add(
                   "⚠️ Offer on ${item.name} removed because free item is unavailable.");
             }

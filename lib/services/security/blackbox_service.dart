@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import '../../utils/user_session.dart'; // 🚀 SAAS INJECTION IMPORT
 
 class BlackBoxService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -28,6 +29,8 @@ class BlackBoxService {
         'userEmail': user?.email,
         'extraData': extraData ?? {},
         'timestamp': FieldValue.serverTimestamp(),
+        'tenantId': UserSession.tenantId, // 🚀 SAAS INJECTION
+        'storeId': UserSession.storeId, // 🚀 SAAS INJECTION
       });
 
       debugPrint("⬛ BLACKBOX LOGGED: $eventType");

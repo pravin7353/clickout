@@ -1,5 +1,6 @@
 // lib/services/inventory/inventory_service.dart
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../../utils/user_session.dart';
 
 class InventoryService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -7,10 +8,17 @@ class InventoryService {
   // 📦 FETCH PRODUCT LIVE DETAILS
   Future<Map<String, dynamic>?> getProductLiveDetails(String barcode) async {
     try {
-      DocumentSnapshot doc =
-          await _db.collection('products').doc(barcode).get();
-      if (doc.exists) {
-        return doc.data() as Map<String, dynamic>;
+      final snap = await _db
+          .collection('products')
+          .where('barcode', isEqualTo: barcode)
+          .where('tenantId',
+              isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
+          .where('storeId', isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
+          .limit(1)
+          .get();
+
+      if (snap.docs.isNotEmpty) {
+        return snap.docs.first.data();
       }
       return null;
     } catch (e) {
