@@ -125,22 +125,79 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
           });
 
           return ListView.builder(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             itemCount: docs.length,
             itemBuilder: (context, index) {
               var data = docs[index].data() as Map<String, dynamic>;
               String orderId = docs[index].id;
               double amount = (data['totalAmount'] ?? 0).toDouble();
-              String status = data['status'] ?? 'UNKNOWN';
               bool isBlackBox = data['isBlackBoxCorrupted'] == true;
-              Timestamp? createdAt = data['createdAt'] as Timestamp?;
-              String dateStr = createdAt != null
+
+              // Date Fallback Logic
+              Timestamp? timestamp = data['timestamp'] as Timestamp? ??
+                  data['createdAt'] as Timestamp?;
+              String dateStr = timestamp != null
                   ? DateFormat('dd MMM yyyy, hh:mm a')
-                      .format(createdAt.toDate())
+                      .format(timestamp.toDate())
                   : 'Unknown Date';
 
+              // 🚀 SMART STATUS PILL ENGINE
+              String exitStatus =
+                  (data['exitStatus'] ?? '').toString().toUpperCase();
+              String payStatus =
+                  (data['paymentStatus'] ?? '').toString().toUpperCase();
+              String rawStatus =
+                  (data['status'] ?? '').toString().toUpperCase();
+
+              bool isFixed = data['wasEverRejected'] == true ||
+                  (data['gatePassVersion'] != null &&
+                      data['gatePassVersion'] > 1) ||
+                  rawStatus == 'SUPERSEDED';
+
+              String pillText = 'UNKNOWN';
+              Color pillColor = Colors.grey;
+              Color iconBgColor = Colors.grey.shade200;
+              IconData mainIcon = Icons.help_outline;
+
+              if (exitStatus == 'REJECTED') {
+                pillText = 'EXIT STOPPED';
+                pillColor = Colors.red;
+                iconBgColor = Colors.red.shade100;
+                mainIcon = Icons.error_outline;
+              } else if (exitStatus == 'COMPLETED' ||
+                  exitStatus == 'EXITED' ||
+                  exitStatus == 'APPROVED') {
+                if (isFixed || isBlackBox) {
+                  pillText = 'FIXED & EXITED';
+                  pillColor = const Color(0xFF00BFA5); // Teal Accent
+                  iconBgColor = const Color(0xFFE0F2F1);
+                  mainIcon = Icons.build;
+                } else {
+                  pillText = 'CLEAR EXIT';
+                  pillColor = Colors.green;
+                  iconBgColor = Colors.green.shade100;
+                  mainIcon = Icons.check_circle;
+                }
+              } else if (payStatus == 'PAID' &&
+                  (exitStatus == 'PENDING' || exitStatus == 'READY_FOR_EXIT')) {
+                pillText = 'NEW GATE PASS GENERATED';
+                pillColor = Colors.blue;
+                iconBgColor = Colors.blue.shade100;
+                mainIcon = Icons.qr_code_scanner;
+              } else if (payStatus == 'PENDING') {
+                pillText = 'PAYMENT PENDING';
+                pillColor = Colors.orange;
+                iconBgColor = Colors.orange.shade100;
+                mainIcon = Icons.hourglass_empty;
+              } else if (exitStatus == 'EXPIRED' || rawStatus == 'EXPIRED') {
+                pillText = 'GATE PASS EXPIRED';
+                pillColor = Colors.purpleAccent;
+                iconBgColor = Colors.purpleAccent.shade100;
+                mainIcon = Icons.timer_off;
+              }
+
               void handleTap() {
-                if (status == 'PENDING' && data['paymentMode'] == 'CASH') {
+                if (payStatus == 'PENDING' && data['paymentMode'] == 'CASH') {
                   Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -154,89 +211,115 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                 }
               }
 
+              // 🚀 VIP EXACT MOCKUP UI
               return Card(
-                margin: const EdgeInsets.only(bottom: 12),
+                margin: const EdgeInsets.only(bottom: 14),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(15)),
-                elevation: 2,
-                color: isBlackBox ? Colors.black87 : Colors.white,
+                    borderRadius: BorderRadius.circular(16)),
+                elevation: 1,
+                color: isBlackBox ? const Color(0xFF1E1E1E) : Colors.white,
                 child: Padding(
-                  padding: const EdgeInsets.all(12.0),
+                  padding: const EdgeInsets.all(16.0),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      CircleAvatar(
-                        backgroundColor: status == 'COMPLETED'
-                            ? Colors.green.shade100
-                            : (status == 'PENDING'
-                                ? Colors.orange.shade100
-                                : Colors.red.shade100),
-                        child: Icon(
-                          status == 'COMPLETED'
-                              ? Icons.check_circle
-                              : (status == 'PENDING'
-                                  ? Icons.hourglass_empty
-                                  : Icons.error),
-                          color: status == 'COMPLETED'
-                              ? Colors.green
-                              : (status == 'PENDING'
-                                  ? Colors.orange
-                                  : Colors.red),
+                      // Left Icon Avatar
+                      Container(
+                        width: 54,
+                        height: 54,
+                        decoration: BoxDecoration(
+                          color: isBlackBox
+                              ? pillColor.withOpacity(0.15)
+                              : iconBgColor,
+                          shape: BoxShape.circle,
                         ),
+                        child: Icon(mainIcon, color: pillColor, size: 26),
                       ),
-                      const SizedBox(width: 15),
+                      const SizedBox(width: 16),
+                      // Middle Detail Content
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text("Order: ${orderId.substring(0, 8)}...",
-                                style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontFamily: 'DejaVuSansMono',
-                                    color: isBlackBox
-                                        ? Colors.white
-                                        : Colors.black87)),
-                            const SizedBox(height: 4),
-                            Text(dateStr,
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    color: isBlackBox
-                                        ? Colors.white70
-                                        : Colors.grey)),
-                            if (isBlackBox && data['revisionHistory'] != null)
-                              Padding(
-                                padding: const EdgeInsets.only(top: 4),
-                                child: Text(
-                                  "⚠️ AI Record: ${(data['revisionHistory'] as List).length} Attempt(s) Logged",
-                                  style: const TextStyle(
-                                      color: Colors.orange,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold),
-                                ),
+                            Text(
+                              "₹${amount.toStringAsFixed(2)}",
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'DejaVuSansMono',
+                                color:
+                                    isBlackBox ? Colors.white : Colors.black87,
                               ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              dateStr,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: isBlackBox
+                                    ? Colors.white54
+                                    : Colors.grey.shade500,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            // THE COLOURED STATUS PILL
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: isBlackBox
+                                    ? pillColor.withOpacity(0.1)
+                                    : Colors.white,
+                                border: Border.all(
+                                    color: pillColor.withOpacity(0.5)),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    pillText,
+                                    style: TextStyle(
+                                      color: pillColor,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                  if (isBlackBox) ...[
+                                    const SizedBox(width: 4),
+                                    Icon(Icons.build,
+                                        color: pillColor, size: 10),
+                                  ]
+                                ],
+                              ),
+                            ),
+                            // Black Box AI Log Alert
+                            if (isBlackBox &&
+                                data['revisionHistory'] != null) ...[
+                              const SizedBox(height: 10),
+                              Row(
+                                children: [
+                                  const Icon(Icons.warning_amber_rounded,
+                                      color: Colors.orange, size: 14),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    "AI Record: ${(data['revisionHistory'] as List).length} Attempt(s) Logged",
+                                    style: const TextStyle(
+                                      color: Colors.orange,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              )
+                            ],
                           ],
                         ),
                       ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text("₹${amount.toStringAsFixed(0)}",
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                  color: isBlackBox
-                                      ? Colors.white
-                                      : Colors.black87)),
-                          const SizedBox(height: 4),
-                          Text(status,
-                              style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                  color: status == 'COMPLETED'
-                                      ? Colors.green
-                                      : Colors.orange)),
-                        ],
-                      ),
+                      // Right Options Menu
                       PopupMenuButton<String>(
+                        padding: EdgeInsets.zero,
                         icon: Icon(Icons.more_vert,
                             color: isBlackBox ? Colors.white54 : Colors.grey),
                         shape: RoundedRectangleBorder(
@@ -247,15 +330,18 @@ class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
                         itemBuilder: (BuildContext context) =>
                             <PopupMenuEntry<String>>[
                           const PopupMenuItem<String>(
-                              value: 'view',
-                              child: Row(children: [
+                            value: 'view',
+                            child: Row(
+                              children: [
                                 Icon(Icons.visibility,
                                     size: 20, color: Colors.blueAccent),
                                 SizedBox(width: 10),
                                 Text('View Details',
                                     style:
-                                        TextStyle(fontWeight: FontWeight.bold))
-                              ])),
+                                        TextStyle(fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
                         ],
                       ),
                     ],

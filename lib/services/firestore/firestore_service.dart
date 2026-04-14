@@ -2,66 +2,78 @@ import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import '../../utils/user_session.dart'; // 🚀 SAAS INJECTION IMPORT
+import '../../utils/user_session.dart';
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  // 1. 🔍 GET PRODUCT (GLOBAL: Sabke liye same database)
+  // 1. 🔍 GET PRODUCT (🚀 THE BULLETPROOF SCANNER ENGINE)
   Future<Map<String, dynamic>?> getProductByBarcode(String barcode) async {
     try {
+      // Search screen jaisa same logic: Pehle dukan ka stock uthao
       final snap = await _db
           .collection('products')
-          .where('barcode', isEqualTo: barcode)
-          .where('tenantId',
-              isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
-          .where('storeId', isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
-          .limit(1)
+          .where('tenantId', isEqualTo: UserSession.tenantId)
+          .where('branchCode', isEqualTo: UserSession.storeId)
           .get();
 
-      if (snap.docs.isNotEmpty) {
-        return snap.docs.first.data();
+      // Barcode se kachra (spaces, quotes) saaf karo taaki CSV ki galti chhip jaye
+      String cleanScanned =
+          barcode.toString().replaceAll(RegExp(r'[^0-9a-zA-Z]'), '');
+
+      for (var doc in snap.docs) {
+        final data = doc.data();
+        if (data['barcode'] != null) {
+          String dbBarcode = data['barcode']
+              .toString()
+              .replaceAll(RegExp(r'[^0-9a-zA-Z]'), '');
+
+          if (dbBarcode == cleanScanned) {
+            return data; // 🔥 100% GUARANTEED MATCH
+          }
+        }
       }
-      return null;
+      return null; // Asli me nahi mila
     } catch (e) {
-      print("Error fetching product: $e");
+      print("Scanner Error: $e");
       return null;
     }
   }
 
-  // 2. 🔎 SEARCH PRODUCTS (GLOBAL)
+  // 2. 🔎 SEARCH PRODUCTS
   Future<List<Map<String, dynamic>>> searchProducts(String query) async {
     try {
       if (query.isEmpty) return [];
       String searchTerm = query.toLowerCase();
 
-      // ⚠️ CHANGE: Global search 'products' collection mein
       final snapshot = await _db
           .collection('products')
-          .where('tenantId',
-              isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
-          .where('storeId', isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
-          .where('searchKey', isGreaterThanOrEqualTo: searchTerm)
-          .where('searchKey', isLessThan: '${searchTerm}z')
-          .limit(10)
+          .where('tenantId', isEqualTo: UserSession.tenantId)
+          .where('branchCode', isEqualTo: UserSession.storeId)
           .get();
 
-      return snapshot.docs.map((doc) => doc.data()).toList();
+      return snapshot.docs
+          .map((doc) => doc.data())
+          .where((data) {
+            String searchKey = (data['searchKey'] ?? data['name'] ?? '')
+                .toString()
+                .toLowerCase();
+            return searchKey.contains(searchTerm);
+          })
+          .take(10)
+          .toList();
     } catch (e) {
       print("Search Error: $e");
       return [];
     }
   }
 
-  // 3. 📸 UPLOAD IMAGE (GLOBAL FOLDER)
+  // 3. 📸 UPLOAD IMAGE
   Future<String?> uploadProductImage(File imageFile, String barcode) async {
     try {
-      // ⚠️ CHANGE: Images bhi ek common folder mein jayengi
-      final ref = FirebaseStorage.instance.ref().child(
-            'product_images/$barcode.jpg',
-          );
-
+      final ref =
+          FirebaseStorage.instance.ref().child('product_images/$barcode.jpg');
       await ref.putFile(imageFile);
       return await ref.getDownloadURL();
     } catch (e) {
@@ -70,19 +82,17 @@ class FirestoreService {
     }
   }
 
-  // 4. 💾 ADD PRODUCT (GLOBAL SAVE)
+  // 4. 💾 ADD PRODUCT
   Future<void> addProduct({
     required String barcode,
     required String name,
     required double price,
     required double gst,
-    required double weight, // ⚖️ Weight bhi save hoga
+    required double weight,
     required int stock,
     String? imageUrl,
   }) async {
-// ⚠️ CHANGE: SaaS Isolation - Barcode ke sath TenantId & StoreId link taaki clash na ho
     String docId = '${UserSession.tenantId}_${UserSession.storeId}_$barcode';
-
     await _db.collection('products').doc(docId).set({
       'name': name,
       'searchKey': name.toLowerCase(),
@@ -94,8 +104,8 @@ class FirestoreService {
       'physicalStock': stock,
       'soldStock': 0,
       'imageUrl': imageUrl,
-      'tenantId': UserSession.tenantId, // 🚀 SAAS INJECTION
-      'storeId': UserSession.storeId, // 🚀 SAAS INJECTION
+      'tenantId': UserSession.tenantId,
+      'branchCode': UserSession.storeId,
     });
   }
 }

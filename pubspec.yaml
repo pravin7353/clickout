@@ -51,6 +51,9 @@ dependencies:
   #Web  
   universal_html: ^2.3.0  
 
+  google_fonts: ^4.0.3
+  dots_indicator: ^2.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -58,34 +61,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  
   assets:
-    - assets/fonts/NotoSans-Regular.ttf
-    - assets/fonts/Roboto-Regular.ttf
     - assets/icons/logo.png
     - assets/icons/gpay.png
     - assets/icons/phonepe.png
     - assets/icons/paytm.png
     - assets/icons/upi.png
-    - assets/sounds/beep.mp3
-    - assets/sounds/delete.mp3
-
-  # 🔥 New Fonts Added Here
-  fonts:
-    - family: DejaVuSansMono
-      fonts:
-        - asset: assets/fonts/DejaVuSansMono.ttf
-        - asset: assets/fonts/DejaVuSansMono-Bold.ttf
-          weight: 700
-        - asset: assets/fonts/DejaVuSansMono-Oblique.ttf
-          style: italic
-        - asset: assets/fonts/DejaVuSansMono-BoldOblique.ttf
-          weight: 700
-          style: italic
-
-# Splash Config
-# flutter_native_splash:
-#   color: "#FFFFFF"
-#   image: assets/icons/logo.png 
-#   android: true
-#   ios: true
+    # - assets/sounds/delete.mp3  # Isko uncomment karna jab file daal do

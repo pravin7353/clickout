@@ -10,6 +10,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 
 import 'services/cart/cart_service.dart';
+import 'services/session_service.dart'; // 🚀 ADDED THIS LINE
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'screens/order_history_screen.dart';
@@ -41,7 +42,10 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   try {
-    await Firebase.initializeApp();
+    // 🚀 SAAS FIX: Web requires options for Firebase Init
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     await FirebaseAuth.instance
         .setPersistence(kIsWeb ? Persistence.LOCAL : Persistence.LOCAL);
 
@@ -104,6 +108,8 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(
+            create: (_) => SessionService()), // 🚀 ADDED THIS LINE
         ChangeNotifierProvider(create: (_) => CartService()),
       ],
       child: const MyApp(),

@@ -93,7 +93,8 @@ class ProductSearchDelegate extends SearchDelegate {
       stream: FirebaseFirestore.instance
           .collection('products')
           .where('tenantId', isEqualTo: UserSession.tenantId)
-          .where('storeId', isEqualTo: UserSession.storeId)
+          .where('branchCode',
+              isEqualTo: UserSession.storeId) // 🚀 FIXED FIELD NAME!
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {

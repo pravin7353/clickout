@@ -5,8 +5,8 @@ class CartItem {
   final double gst;
   final double weight;
   final int quantity;
-
-  // 🎁 OFFER FIELDS (No Math here, just storage)
+  final int freeQtyGiven;
+  final bool isOverflow;
   final bool clearanceActive;
   final String clearanceType;
   final int buyQty;
@@ -23,6 +23,8 @@ class CartItem {
     required this.gst,
     required this.weight,
     required this.quantity,
+    this.freeQtyGiven = 0,
+    this.isOverflow = false,
     this.clearanceActive = false,
     this.clearanceType = '',
     this.buyQty = 1,
@@ -33,22 +35,31 @@ class CartItem {
     this.comboPrice = 0.0,
   });
 
-  // 🚀 ENGINE-DRIVEN PRICING
-  // OfferEngineService sets clearanceValue as the Final Price for FLAT/PERCENT/COMBO
+  // 🚀 FIX: Accepts 0.0 as a valid price for FREE items (clearanceValue >= 0)
   double get finalUnitPrice {
-    if (!clearanceActive) return originalPrice;
-    if (clearanceType == 'BOGO' || clearanceType == 'BUY_X_GET_Y') {
+    if (!clearanceActive || isOverflow) {
       return originalPrice;
     }
-    return clearanceValue > 0 ? clearanceValue : originalPrice;
+    if (clearanceType == 'BOGO' ||
+        clearanceType == 'BUY_X_GET_Y' ||
+        clearanceType == 'BUY_X_GET_Y_CROSS') {
+      return originalPrice;
+    }
+    return clearanceValue >= 0.0 ? clearanceValue : originalPrice;
   }
 
-  // 📦 CALCULATED BY UI LATER
-  double get totalPrice => finalUnitPrice * quantity;
   int get payableQty => quantity;
+  int get physicalTotalQty => quantity + freeQtyGiven;
+  double get totalPrice => finalUnitPrice * payableQty;
 
   CartItem copyWith({
+    String? name,
+    double? originalPrice,
+    double? gst,
+    double? weight,
     int? quantity,
+    int? freeQtyGiven,
+    bool? isOverflow,
     bool? clearanceActive,
     String? clearanceType,
     double? clearanceValue,
@@ -60,11 +71,13 @@ class CartItem {
   }) {
     return CartItem(
       barcode: barcode,
-      name: name,
-      originalPrice: originalPrice,
-      gst: gst,
-      weight: weight,
+      name: name ?? this.name,
+      originalPrice: originalPrice ?? this.originalPrice,
+      gst: gst ?? this.gst,
+      weight: weight ?? this.weight,
       quantity: quantity ?? this.quantity,
+      freeQtyGiven: freeQtyGiven ?? this.freeQtyGiven,
+      isOverflow: isOverflow ?? this.isOverflow,
       clearanceActive: clearanceActive ?? this.clearanceActive,
       clearanceType: clearanceType ?? this.clearanceType,
       buyQty: buyQty ?? this.buyQty,
@@ -83,6 +96,8 @@ class CartItem {
         'gst': gst,
         'weight': weight,
         'quantity': quantity,
+        'freeQtyGiven': freeQtyGiven,
+        'isOverflow': isOverflow,
         'clearanceActive': clearanceActive,
         'clearanceType': clearanceType,
         'buyQty': buyQty,
@@ -101,6 +116,8 @@ class CartItem {
         gst: double.tryParse(json['gst']?.toString() ?? '0') ?? 0.0,
         weight: double.tryParse(json['weight']?.toString() ?? '0') ?? 0.0,
         quantity: json['quantity'] ?? 1,
+        freeQtyGiven: json['freeQtyGiven'] ?? 0,
+        isOverflow: json['isOverflow'] ?? false,
         clearanceActive: json['clearanceActive'] ?? false,
         clearanceType: json['clearanceType'] ?? '',
         buyQty: json['buyQty'] ?? 1,

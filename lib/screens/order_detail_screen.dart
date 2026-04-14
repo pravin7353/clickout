@@ -60,6 +60,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
               exitStatus == 'EXITED' ||
               exitStatus == 'APPROVED');
 
+          // 🚀 THE LOOP FIX: Auto-Clear Cart on Guard Approval
+          if (isCleanExit) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final cart = Provider.of<CartService>(context, listen: false);
+              // 🔥 MASTER FIX: 'clear()' locked tha isliye crash ho gaya.
+              // 'clearCart()' background system bypass hai jo forcefully sab saaf karega!
+              if (cart.items.isNotEmpty || cart.isCorrectionMode) {
+                cart.clearCart();
+              }
+            });
+          }
+
           Widget content;
 
           if (orderStatus == 'DELETED' || orderStatus == 'CANCELLED') {
@@ -186,7 +198,16 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                       child: IconButton(
                           icon: const Icon(Icons.arrow_back_ios_new,
                               color: Colors.white, size: 18),
-                          onPressed: () => Navigator.pop(context)))),
+                          onPressed: () {
+                            if (isCleanExit) {
+                              // 🚀 FIX: Agar Gate Pass approve ho gaya, toh back dabane par
+                              // wapas Cart/Payment pe jane ke bajaye seedha Home pe feko!
+                              Navigator.of(context)
+                                  .popUntil((route) => route.isFirst);
+                            } else {
+                              Navigator.pop(context);
+                            }
+                          }))),
             ],
           );
         },
@@ -355,16 +376,18 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
                     .doc(widget.orderId)
                     .update({
                   'exitStatus': 'RESOLVED_BY_USER',
-                  'status': 'SUPERSEDED',
+                  'status': 'SUPERSEDED', // Marks old order as dead
                   'isDeleted': true,
                   'resolvedAt': FieldValue.serverTimestamp(),
                 });
               } catch (e) {
-                debugPrint("Ghost killer failed: $e");
+                debugPrint("Correction switch failed: $e");
               }
 
               if (context.mounted) {
                 final cart = Provider.of<CartService>(context, listen: false);
+                // 🚀 THE HOLD FIX: Cart is already intact in local memory!
+                // We just need to unlock the UI for editing and attach the old orderId
                 await cart.loadOrderForCorrection(
                     widget.orderId, data['items']);
 
