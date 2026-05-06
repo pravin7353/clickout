@@ -1,12 +1,14 @@
+import '../utils/user_session.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // For Haptics
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../services/cart/cart_service.dart';
 import '../services/orders/order_service.dart';
+import '../services/payment/phonepe_service.dart';
+import '../services/payment/razorpay_service.dart';
 import 'payment_qr_screen.dart';
-import 'upi_payment_screen.dart';
 
-// 🧠 THE SINGLE SOURCE OF TRUTH
 enum PaymentMethod { upi, cash, card }
 
 class CheckoutScreen extends StatefulWidget {
@@ -18,12 +20,25 @@ class CheckoutScreen extends StatefulWidget {
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _isLoading = false;
-
-  // ✅ INITIAL STATE FIX
   PaymentMethod _selectedPayment = PaymentMethod.upi;
 
   final Color cherryRedLight = const Color(0xFFEF5350);
   final Color cherryRedDark = const Color(0xFFC62828);
+
+  final PhonePeService _phonePeService = PhonePeService();
+  final RazorpayService _razorpayService = RazorpayService();
+
+  @override
+  void initState() {
+    super.initState();
+    _phonePeService.initPhonePe();
+  }
+
+  @override
+  void dispose() {
+    _razorpayService.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -128,8 +143,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           ),
                         ),
                         const SizedBox(height: 30),
-
-                        // 🚀 THE FIX: UI SHIELD FOR CORRECTION MODE
                         if (cart.isCorrectionMode) ...[
                           Container(
                               padding: const EdgeInsets.all(16),
@@ -172,11 +185,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           const SizedBox(height: 15),
                           _buildPaymentOption(
                               icon: Icons.qr_code_2,
-                              title: "Pay by any UPI app",
-                              subtitle: "GPay, PhonePe, Paytm",
+                              title: "PhonePe UPI",
+                              subtitle: "Fast & Secure",
                               method: PaymentMethod.upi,
                               activeColor: cherryRedDark,
                               isUpi: true),
+                          const SizedBox(height: 10),
+                          _buildPaymentOption(
+                              icon: Icons.credit_card,
+                              title: "Debit / Credit Card",
+                              subtitle: "Powered by Razorpay",
+                              method: PaymentMethod.card,
+                              activeColor: cherryRedDark),
                           const SizedBox(height: 10),
                           _buildPaymentOption(
                               icon: Icons.money,
@@ -184,16 +204,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                               subtitle: "Pay at counter",
                               method: PaymentMethod.cash,
                               activeColor: cherryRedDark),
-                          const SizedBox(height: 10),
-                          _buildPaymentOption(
-                              icon: Icons.credit_card,
-                              title: "Debit / Credit Card",
-                              subtitle: "Visa, Mastercard, Rupay",
-                              method: PaymentMethod.card,
-                              activeColor: cherryRedDark),
                           const SizedBox(height: 40),
                         ],
-
                         SizedBox(
                           width: double.infinity,
                           height: 56,
@@ -238,7 +250,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     bool isSelected = _selectedPayment == method;
     return GestureDetector(
       onTap: () {
-        HapticFeedback.lightImpact(); // 📱 Subtle feedback
+        HapticFeedback.lightImpact();
         setState(() => _selectedPayment = method);
       },
       child: Container(
@@ -341,16 +353,21 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-// 🚀 PERFECT DYNAMIC ROUTING & CART UNLOCKER
   void _placeOrder(CartService cart) async {
+    if (FirebaseAuth.instance.currentUser == null) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              "Session syncing... Please wait 2 seconds and tap Pay again."),
+          backgroundColor: Colors.orange));
+      return;
+    }
+
     try {
       HapticFeedback.mediumImpact();
       final items = cart.items.values.map((item) => item.toJson()).toList();
       final double orderTotal = cart.grandTotal;
-
       String modeString = _selectedPayment.name.toUpperCase();
-
-      // Backup state before clearing
       bool wasCorrection = cart.isCorrectionMode;
 
       final orderId = await OrderService().createOrUpdateOrder(
@@ -359,16 +376,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         gstTotal: cart.totalGST,
         paymentMode: modeString,
         correctionOrderId: cart.correctionOrderId,
+        existingCartOrderId: cart.currentOrderId,
       );
+
+      cart.setCurrentOrderId(orderId);
 
       if (mounted) {
         setState(() => _isLoading = false);
 
-        // 🔓 THE MASTER FIX: FREE THE CART!
-        // Order place hote hi correction mode end karo aur cart khali karo
-        cart.exitCorrectionMode();
-
-        if (wasCorrection) {
+        if (wasCorrection || _selectedPayment == PaymentMethod.cash) {
           Navigator.pushReplacement(
               context,
               MaterialPageRoute(
@@ -377,28 +393,45 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           return;
         }
 
-        // 🔀 DYNAMIC NAVIGATION
+// 🚀 DYNAMIC ROUTING TO SECURE SDKs
         if (_selectedPayment == PaymentMethod.upi) {
-          Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                  builder: (_) =>
-                      UpiPaymentScreen(orderId: orderId, amount: orderTotal)));
-        } else if (_selectedPayment == PaymentMethod.cash) {
-          Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                  builder: (_) =>
-                      PaymentQRScreen(orderId: orderId, amount: orderTotal)));
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content:
-                  Text("Card Payments coming soon! Redirecting to Cash...")));
-          Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                  builder: (_) =>
-                      PaymentQRScreen(orderId: orderId, amount: orderTotal)));
+          _phonePeService.startPayment(
+              context: context,
+              amount: orderTotal,
+              orderId: orderId,
+              tenantId: UserSession.tenantId, // 🔒 ADDED
+              storeId: UserSession.storeId, // 🔒 ADDED
+              onCompletion: (status, message) {
+                if (status == 'SUCCESS') {
+                  Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => PaymentQRScreen(
+                              orderId: orderId, amount: orderTotal)));
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      content: Text(message), backgroundColor: Colors.red));
+                }
+              });
+        } else if (_selectedPayment == PaymentMethod.card) {
+          _razorpayService.initializeRazorpay(onSuccess: (response) {
+            Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                    builder: (_) =>
+                        PaymentQRScreen(orderId: orderId, amount: orderTotal)));
+          }, onFailure: (response) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text("Payment Failed!"), backgroundColor: Colors.red));
+          });
+
+          await _razorpayService.openCheckout(
+            amount: orderTotal,
+            orderId: orderId,
+            storeName:
+                "ClickOut Store", // ⚠️ Aage chal kar yahan actual store name DB se aayega
+            contactNumber: "9999999999",
+          );
         }
       }
     } catch (e) {

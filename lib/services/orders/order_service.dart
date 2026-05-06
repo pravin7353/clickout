@@ -47,11 +47,16 @@ class OrderService {
     required double gstTotal,
     required String paymentMode,
     String? correctionOrderId,
+    String? existingCartOrderId,
   }) async {
     final user = _auth.currentUser;
     if (user == null) throw Exception("User not logged in");
 
+    // 🚀 THE FIX: FETCH ACTUAL NAME AND PHONE FROM USER PROFILE
     String realEmail = user.email ?? 'Guest';
+    String realName = user.displayName ?? '';
+    String realPhone = user.phoneNumber ?? '';
+
     try {
       final userDoc = await _db.collection('users').doc(user.uid).get();
       if (userDoc.exists && userDoc.data() != null) {
@@ -59,14 +64,33 @@ class OrderService {
         if (data['email'] != null && data['email'].toString().isNotEmpty) {
           realEmail = data['email'];
         }
+        if (data['name'] != null && data['name'].toString().isNotEmpty) {
+          realName = data['name'];
+        } else if (data['firstName'] != null) {
+          realName = "${data['firstName']} ${data['lastName'] ?? ''}".trim();
+        }
+        if (data['phone'] != null && data['phone'].toString().isNotEmpty) {
+          realPhone = data['phone'];
+        } else if (data['mobile'] != null) {
+          realPhone = data['mobile'];
+        }
       }
     } catch (e) {}
+
+    // Fallback to UID if name is empty or "customer"
+    if (realName.trim().isEmpty ||
+        realName.trim().toLowerCase() == 'customer' ||
+        realName.trim().toLowerCase() == 'walk-in customer') {
+      realName = user.uid;
+    }
 
     final riskProfile = _fraudDetector.evaluateCartRisk(items);
 
     // 🛑 THE MASTER FIX 1: Bypass stale pending orders!
-    // Always create a Fresh Gate Pass unless Guard specifically sent it back for correction.
-    String? existingId = correctionOrderId;
+    // Reuses same order ID if user goes back to cart (No ghost duplicate orders!)
+    bool isGuardCorrection =
+        correctionOrderId != null; // 🚀 BUG 3 FIX: Isolate real corrections
+    String? existingId = correctionOrderId ?? existingCartOrderId;
 
     DocumentReference orderRef = existingId != null
         ? _db.collection('orders').doc(existingId)
@@ -81,12 +105,20 @@ class OrderService {
     double finalGstTotal = gstTotal;
     int gatePassVersion = 1;
     List<dynamic> revisionHistory = [];
+    bool previousWasRejected = false;
+    bool previousWasCorrection = false;
+    String? existingInvoiceNo; // 🚀 CHECK EXISTING INVOICE
 
     if (existingId != null) {
       try {
         DocumentSnapshot oldDoc = await orderRef.get();
         if (oldDoc.exists) {
           final oldData = oldDoc.data() as Map<String, dynamic>;
+
+          existingInvoiceNo =
+              oldData['invoiceNo']; // 🚀 Fetch it so we don't overwrite!
+          previousWasRejected = oldData['wasEverRejected'] == true;
+          previousWasCorrection = oldData['isCorrectionMode'] == true;
 
           if (oldData['paymentStatus'] == 'PAID') {
             finalPaymentStatus = 'PAID';
@@ -108,11 +140,112 @@ class OrderService {
       } catch (e) {}
     }
 
+    // ==========================================================
+    // 🧠 THE SMART INVOICE ENGINE (As per your exact flow)
+    // ==========================================================
+    if (existingInvoiceNo == null || existingInvoiceNo.isEmpty) {
+      String prefix = "INV/"; // Default Fallback
+
+      // 1️⃣ Check Admin's Custom Rules (From Tenants Collection)
+      if (UserSession.tenantId.isNotEmpty &&
+          UserSession.tenantId != 'ALL' &&
+          UserSession.tenantId != 'GLOBAL') {
+        try {
+          var tSnap =
+              await _db.collection('tenants').doc(UserSession.tenantId).get();
+          if (tSnap.exists) {
+            var config =
+                tSnap.data()?['invoiceConfig'] as Map<String, dynamic>? ?? {};
+            String adminPrefix =
+                config['invoicePrefix']?.toString().trim() ?? '';
+
+            // 🧹 THE ULTIMATE SHIELD: Force remove any year pattern (like 26-27/) from Admin's setting
+            adminPrefix =
+                adminPrefix.replaceAll(RegExp(r'\d{2}-\d{2}[/-]?'), '');
+
+            if (adminPrefix.isNotEmpty) {
+              prefix = adminPrefix;
+              if (!prefix.endsWith('/') && !prefix.endsWith('-')) prefix += '/';
+            } else {
+              prefix = "INV/"; // Fallback if prefix became empty after cleaning
+            }
+          }
+        } catch (_) {}
+      }
+
+      // 2️⃣ Date & Year Formatting
+      final now = DateTime.now();
+      int startYear = now.month >= 4 ? now.year : now.year - 1;
+      String fyStr =
+          "${(startYear % 100).toString().padLeft(2, '0')}-${((startYear + 1) % 100).toString().padLeft(2, '0')}";
+      String dateStr =
+          "${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+      String todayKey =
+          "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+
+      // 3️⃣ Atomic Sequence Counter
+      DocumentReference counterRef = _db
+          .collection('daily_invoice_counters')
+          .doc("${UserSession.branchCode}_$todayKey");
+      int seq = await _db.runTransaction((transaction) async {
+        DocumentSnapshot snapshot = await transaction.get(counterRef);
+        if (!snapshot.exists) {
+          transaction.set(counterRef, {'count': 1});
+          return 1;
+        } else {
+          int newCount = (snapshot.data() as Map<String, dynamic>)['count'] + 1;
+          transaction.update(counterRef, {'count': newCount});
+          return newCount;
+        }
+      });
+
+      // 4️⃣ Final Construction (e.g., MART/26-27/04-23-01)
+      existingInvoiceNo =
+          "$prefix$fyStr/$dateStr-${seq.toString().padLeft(2, '0')}";
+    }
+
+    // 🧠 1-TIME MASTER CALCULATION (For Database)
+    double dbTotalSavings = 0.0;
+    double dbTaxableValue = 0.0;
+
+    for (var item in items) {
+      int qty = int.tryParse(
+              item['quantity']?.toString() ?? item['qty']?.toString() ?? '1') ??
+          1;
+      double price = double.tryParse(item['price']?.toString() ??
+              item['unitPrice']?.toString() ??
+              item['discountedPrice']?.toString() ??
+              '0') ??
+          0.0;
+      double originalPrice = double.tryParse(
+              item['originalPrice']?.toString() ??
+                  item['mrp']?.toString() ??
+                  '0') ??
+          price;
+
+      if (originalPrice > price)
+        dbTotalSavings += (originalPrice - price) * qty;
+
+      double itemTotal = price * qty;
+      double gstRate = 0.0;
+      if (item['gst'] != null) {
+        gstRate = double.tryParse(
+                item['gst'].toString().replaceAll(RegExp(r'[^0-9.]'), '')) ??
+            0.0;
+      }
+      dbTaxableValue += itemTotal / (1 + (gstRate / 100));
+    }
+
     WriteBatch batch = _db.batch();
 
     Map<String, dynamic> orderData = {
+      'taxableValue': dbTaxableValue,
+      'totalSavings': dbTotalSavings,
+      'invoiceNo': existingInvoiceNo,
       'userId': user.uid,
       'userEmail': realEmail,
+      'customerName': realName,
+      'customerPhone': realPhone,
       'items': items,
       'totalAmount': finalTotalAmount,
       'gstTotal': finalGstTotal,
@@ -128,8 +261,10 @@ class OrderService {
       'status': finalStatus,
       'paymentStatus': finalPaymentStatus,
       'exitStatus': finalExitStatus,
-      'wasEverRejected': existingId != null,
-      'isCorrectionMode': existingId != null,
+      'wasEverRejected':
+          isGuardCorrection ? true : previousWasRejected, // 🚀 BUG 3 FIX
+      'isCorrectionMode':
+          isGuardCorrection ? true : previousWasCorrection, // 🚀 BUG 3 FIX
       'gatePassVersion': gatePassVersion,
       'isDeleted': false,
       'qrConsumed': false,
@@ -178,14 +313,12 @@ class OrderService {
           crossItemDeduction = combos * freeQty;
         }
 
-        // 🛑 THE MASTER FIX 2: Query by Field Name! (Bypasses double-quote string glitches)
+        // 🚀 BUG 1 FIX: Changed 'storeId' to 'branchCode' to match Product Master schema!
         final pSnap = await _db
             .collection('products')
             .where('barcode', isEqualTo: barcode)
-            .where('tenantId',
-                isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
-            .where('storeId',
-                isEqualTo: UserSession.storeId) // 🚀 SAAS INJECTION
+            .where('tenantId', isEqualTo: UserSession.tenantId)
+            .where('branchCode', isEqualTo: UserSession.branchCode)
             .limit(1)
             .get();
         if (pSnap.docs.isNotEmpty) {

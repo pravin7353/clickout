@@ -14,8 +14,10 @@ import 'scan_product_screen.dart';
 import 'profile_screen.dart';
 import 'cart_screen.dart';
 import 'order_history_screen.dart';
+import 'order_detail_screen.dart';
 import '/utils/user_session.dart';
-// import '../widgets/store_offers_sheet.dart'; // 🚀 TEMPORARY DISABLED
+import '../widgets/store_offers_sheet.dart';
+import '../widgets/gate_pass_tile.dart';
 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const Color _scaffoldBg = Color(0xFFF6F6F4);
@@ -45,11 +47,32 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _currentCarouselIndex = 0;
   Timer? _carouselTimer;
 
-  // Pulse animation for SCAN button
   late AnimationController _pulseController;
   late AnimationController _pulse2Controller;
 
-  // 🚀 FIX: Removed unused _scanPressed variable to clear yellow warning
+  String _firstName = "there";
+
+  DateTime? _lastPressedAt; // 🚀 Added for Double Tap Exit
+
+  // 🧠 Fetch Name from Firestore
+  Future<void> _fetchUserName() async {
+    final String uid = UserSession.uid;
+    if (uid.isEmpty) return;
+    try {
+      final doc =
+          await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (doc.exists && doc.data() != null) {
+        String fullName = doc.data()!['name']?.toString().trim() ?? '';
+        if (fullName.isNotEmpty && fullName.toLowerCase() != 'deleted user') {
+          setState(() {
+            _firstName = fullName.split(' ')[0];
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Name fetch error: $e");
+    }
+  }
 
   final List<Map<String, dynamic>> _fomoOffers = [
     {
@@ -85,6 +108,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _fetchUserName();
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2000),
@@ -93,7 +117,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(milliseconds: 2000),
     )..repeat();
-    // Offset second pulse
     Future.delayed(const Duration(milliseconds: 700), () {
       if (mounted) _pulse2Controller.forward(from: 0.35);
     });
@@ -129,18 +152,30 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Future<void> _launchYouTube() async {
     final Uri url = Uri.parse('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
-    if (await canLaunchUrl(url)) await launchUrl(url);
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint("Error launching YouTube: $e");
+    }
   }
 
   Future<void> _launchAppStore() async {
     final Uri url = Uri.parse('https://apps.apple.com/in/app/your-app-id');
-    if (await canLaunchUrl(url)) await launchUrl(url);
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint("Error: $e");
+    }
   }
 
   Future<void> _launchPlayStore() async {
     final Uri url = Uri.parse(
         'https://play.google.com/store/apps/details?id=com.your.package');
-    if (await canLaunchUrl(url)) await launchUrl(url);
+    try {
+      await launchUrl(url, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      debugPrint("Error: $e");
+    }
   }
 
   Future<void> _confirmExitStore() async {
@@ -198,10 +233,35 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       const CartScreen(),
       const ProfileScreen(),
     ];
-    return Scaffold(
-      backgroundColor: _scaffoldBg,
-      body: pages[_selectedIndex],
-      bottomNavigationBar: _buildBottomNav(cart),
+
+    // ignore: deprecated_member_use
+    return WillPopScope(
+      onWillPop: () async {
+        if (_selectedIndex != 0) {
+          setState(() => _selectedIndex = 0);
+          return false;
+        }
+
+        // 🚀 FIX: Double Tap to Exit App Logic
+        final now = DateTime.now();
+        if (_lastPressedAt == null ||
+            now.difference(_lastPressedAt!) > const Duration(seconds: 2)) {
+          _lastPressedAt = now;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Press back again to exit"),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          return false; // Don't exit yet
+        }
+        return true; // Exit app
+      },
+      child: Scaffold(
+        backgroundColor: _scaffoldBg,
+        body: pages[_selectedIndex],
+        bottomNavigationBar: _buildBottomNav(cart),
+      ),
     );
   }
 
@@ -212,56 +272,59 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         color: _cardBg,
         border: Border(top: BorderSide(color: _divider, width: 1)),
       ),
-      child: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: _onItemTapped,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        selectedItemColor: _brandRed,
-        unselectedItemColor: _textMuted,
-        showSelectedLabels: true,
-        showUnselectedLabels: true,
-        selectedLabelStyle:
-            GoogleFonts.dmSans(fontSize: 10, fontWeight: FontWeight.w600),
-        unselectedLabelStyle: GoogleFonts.dmSans(fontSize: 10),
-        type: BottomNavigationBarType.fixed,
-        items: [
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined, size: 24),
-            activeIcon: Icon(Icons.home_rounded, size: 24),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.shopping_bag_outlined, size: 24),
-                if (cart.totalItems > 0)
-                  Positioned(
-                    right: -6,
-                    top: -6,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(
-                          color: _brandRed, shape: BoxShape.circle),
-                      child: Text('${cart.totalItems}',
-                          style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-              ],
+      child: SafeArea(
+        bottom: true,
+        child: BottomNavigationBar(
+          currentIndex: _selectedIndex,
+          onTap: _onItemTapped,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          selectedItemColor: _brandRed,
+          unselectedItemColor: _textMuted,
+          showSelectedLabels: true,
+          showUnselectedLabels: true,
+          selectedLabelStyle:
+              GoogleFonts.dmSans(fontSize: 10, fontWeight: FontWeight.w600),
+          unselectedLabelStyle: GoogleFonts.dmSans(fontSize: 10),
+          type: BottomNavigationBarType.fixed,
+          items: [
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.home_outlined, size: 24),
+              activeIcon: Icon(Icons.home_rounded, size: 24),
+              label: 'Home',
             ),
-            activeIcon: const Icon(Icons.shopping_bag_rounded, size: 24),
-            label: 'Cart',
-          ),
-          const BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline_rounded, size: 24),
-            activeIcon: Icon(Icons.person_rounded, size: 24),
-            label: 'Profile',
-          ),
-        ],
+            BottomNavigationBarItem(
+              icon: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  const Icon(Icons.shopping_bag_outlined, size: 24),
+                  if (cart.totalItems > 0)
+                    Positioned(
+                      right: -6,
+                      top: -6,
+                      child: Container(
+                        padding: const EdgeInsets.all(4),
+                        decoration: const BoxDecoration(
+                            color: _brandRed, shape: BoxShape.circle),
+                        child: Text('${cart.totalItems}',
+                            style: const TextStyle(
+                                fontSize: 9,
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                ],
+              ),
+              activeIcon: const Icon(Icons.shopping_bag_rounded, size: 24),
+              label: 'Cart',
+            ),
+            const BottomNavigationBarItem(
+              icon: Icon(Icons.person_outline_rounded, size: 24),
+              activeIcon: Icon(Icons.person_rounded, size: 24),
+              label: 'Profile',
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -275,71 +338,93 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       children: [
         _buildHeader(isInsideStore),
         Expanded(
-          child: SingleChildScrollView(
-            physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-            child: Column(
-              children: [
-                // ── State A: Web, not in store ────────────────────────────
-                if (kIsWeb && !isInsideStore) ...[
-                  _buildOffersCarousel(),
-                  const SizedBox(height: 20),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 10, child: _buildDynamicEngagementTile()),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        flex: 9,
-                        child: Column(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              return SingleChildScrollView(
+                physics: const BouncingScrollPhysics(),
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+                child: ConstrainedBox(
+                  constraints:
+                      BoxConstraints(minHeight: constraints.maxHeight - 44),
+                  child: IntrinsicHeight(
+                    child: Column(children: [
+                      // ── State A: Web, not in store ────────────────────────────
+                      if (kIsWeb && !isInsideStore) ...[
+                        _buildOffersCarousel(),
+                        const SizedBox(height: 20),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _buildEnterStoreTile(),
-                            const SizedBox(height: 10),
-                            _buildHowItWorksTile(),
+                            Expanded(flex: 10, child: _buildInstallAppTile()),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              flex: 9,
+                              child: Column(
+                                children: [
+                                  _buildEnterStoreTile(),
+                                  const SizedBox(height: 10),
+                                  _buildHowItWorksTile(),
+                                ],
+                              ),
+                            ),
                           ],
                         ),
-                      ),
-                    ],
+                        const Spacer(),
+                        const SizedBox(height: 20),
+                        const GatePassTile(),
+                      ],
+
+                      // ── State B: Web, inside store ────────────────────────────
+                      if (kIsWeb && isInsideStore) ...[
+                        _buildInStoreOffersTile(),
+                        const Spacer(),
+                        _buildHeroScanButton(isInsideStore),
+                        const Spacer(),
+                        const GatePassTile(),
+                      ],
+
+                      // ── State C: Native, not in store ─────────────────────────
+                      if (!kIsWeb && !isInsideStore) ...[
+                        _buildOffersCarousel(),
+                        const SizedBox(height: 20),
+                        Expanded(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                  flex: 10,
+                                  child: _buildDynamicEngagementTile()),
+                              const SizedBox(width: 14),
+                              Expanded(
+                                flex: 9,
+                                child: Column(
+                                  children: [
+                                    Expanded(child: _buildEnterStoreTile()),
+                                    const SizedBox(height: 12),
+                                    _buildHowItWorksTile(),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        const GatePassTile(),
+                      ],
+
+                      // ── State D: Native, inside store ─────────────────────────
+                      if (!kIsWeb && isInsideStore) ...[
+                        _buildInStoreOffersTile(),
+                        const Spacer(),
+                        _buildHeroScanButton(isInsideStore),
+                        const Spacer(),
+                        const GatePassTile(),
+                      ],
+                    ]),
                   ),
-                  const SizedBox(height: 20),
-                  _buildGatePassTile(),
-                ],
-
-                // ── State B: Web, inside store ────────────────────────────
-                if (kIsWeb && isInsideStore) ...[
-                  _buildInStoreOffersTile(),
-                  const SizedBox(height: 24),
-                  _buildHeroScanButton(isInsideStore),
-                  const SizedBox(height: 20),
-                  _buildGatePassTile(),
-                ],
-
-                // ── State C: Native, not in store ─────────────────────────
-                if (!kIsWeb && !isInsideStore) ...[
-                  _buildOffersCarousel(),
-                  const SizedBox(height: 20),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(flex: 10, child: _buildTasksTile()),
-                      const SizedBox(width: 14),
-                      Expanded(flex: 9, child: _buildEnterStoreTile()),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  _buildGatePassTile(),
-                ],
-
-                // ── State D: Native, inside store ─────────────────────────
-                if (!kIsWeb && isInsideStore) ...[
-                  _buildInStoreOffersTile(),
-                  const SizedBox(height: 24),
-                  _buildHeroScanButton(isInsideStore),
-                  const SizedBox(height: 20),
-                  _buildGatePassTile(),
-                ],
-              ],
-            ),
+                ),
+              );
+            },
           ),
         ),
       ],
@@ -369,7 +454,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              // Location / Store row
               Expanded(
                 child: Row(
                   children: [
@@ -428,7 +512,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   ],
                 ),
               ),
-              // Search button
               GestureDetector(
                 onTap: () => showSearch(
                     context: context, delegate: ProductSearchDelegate()),
@@ -446,7 +529,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 20),
           Text(
-            "Hi, there 👋",
+            "Hi, $_firstName 👋",
             style: GoogleFonts.syne(
                 color: _textPrimary, fontSize: 28, fontWeight: FontWeight.w800),
           ),
@@ -535,7 +618,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
         ),
         const SizedBox(height: 10),
-        // Dot indicators
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(_fomoOffers.length, (i) {
@@ -557,24 +639,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-// 🚀 Backend Mapper: Firestore data -> UI Label
-  String? _mapOfferLabel(Map<String, dynamic> data) {
-    final type = data['clearanceType']?.toString().toUpperCase();
-    final discount = data['discount'];
-
-    if (type == 'BOGO') return "Buy 1 Get 1";
-    if (type == 'FLAT_PERCENT') return "${discount ?? 0}% OFF";
-    if (type == 'FLAT_AMOUNT') return "₹${discount ?? 0} OFF";
-    if (type == 'FLASH') return "Flash Sale";
-    return null;
-  }
-
-  // ─── LIVE DYNAMIC OFFERS CAROUSEL (States B & D) ────────────────────────────
   Widget _buildInStoreOffersTile() {
     return const DynamicLiveOffersBanner();
   }
 
-  // ─── HERO SCAN BUTTON (States B & D) ────────────────────────────────────────
   Widget _buildHeroScanButton(bool isInsideStore) {
     bool scanPressed = false;
 
@@ -583,17 +651,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         children: [
           SizedBox(
             width: double.infinity,
-            height: 320, // 🚀 HUGE Container to push bottom items down
+            height: 320,
             child: Center(
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  // Pulse 1
                   AnimatedBuilder(
                     animation: _pulseController,
                     builder: (_, __) => Transform.scale(
-                      scale:
-                          1.0 + (0.4 * _pulseController.value), // Bigger pulse
+                      scale: 1.0 + (0.4 * _pulseController.value),
                       child: Container(
                           width: 280,
                           height: 280,
@@ -605,12 +671,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   width: 3))),
                     ),
                   ),
-                  // Pulse 2
                   AnimatedBuilder(
                     animation: _pulse2Controller,
                     builder: (_, __) => Transform.scale(
-                      scale: 1.0 +
-                          (0.25 * _pulse2Controller.value), // Bigger pulse
+                      scale: 1.0 + (0.25 * _pulse2Controller.value),
                       child: Container(
                           width: 240,
                           height: 240,
@@ -622,13 +686,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   width: 2.5))),
                     ),
                   ),
-                  // Static Ring
                   Container(
                       width: 210,
                       height: 210,
                       decoration: const BoxDecoration(
                           shape: BoxShape.circle, color: _brandRedLight)),
-                  // 🚀 GIANT MAIN BUTTON
                   GestureDetector(
                     onTapDown: (_) => setState(() => scanPressed = true),
                     onTapUp: (_) {
@@ -644,7 +706,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                       scale: scanPressed ? 0.94 : 1.0,
                       duration: const Duration(milliseconds: 100),
                       child: Container(
-                        width: 175, // 🚀 Monster Size (150 -> 175)
+                        width: 175,
                         height: 175,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
@@ -664,7 +726,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             const Icon(Icons.qr_code_scanner_rounded,
-                                color: Colors.white, size: 64), // Huge Icon
+                                color: Colors.white, size: 64),
                             const SizedBox(height: 10),
                             Text(isInsideStore ? "SCAN" : "ENTER",
                                 style: GoogleFonts.syne(
@@ -693,7 +755,66 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     });
   }
 
-  // ─── ENTER STORE TILE (States A & C — right column top) ─────────────────────
+  Widget _buildInstallAppTile() {
+    return Container(
+      height: 340,
+      decoration: BoxDecoration(
+        color: _cardBg,
+        border: Border.all(color: _divider),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _brandRed.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.phone_iphone_rounded,
+                color: _brandRed, size: 36),
+          ),
+          const SizedBox(height: 16),
+          Text("Get the App /n",
+              style: GoogleFonts.syne(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: _textPrimary)),
+          const SizedBox(height: 8),
+          Text("For the best in-store scanning and live offers.",
+              textAlign: TextAlign.center,
+              style: GoogleFonts.dmSans(fontSize: 12, color: _textSecondary)),
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              GestureDetector(
+                onTap: _launchPlayStore,
+                child: const Icon(Icons.android_rounded,
+                    color: _activeGreen, size: 32),
+              ),
+              const SizedBox(width: 24),
+              GestureDetector(
+                onTap: _launchAppStore,
+                child: const Icon(Icons.apple_rounded,
+                    color: Colors.black87, size: 32),
+              ),
+            ],
+          )
+        ],
+      ),
+    );
+  }
+
   Widget _buildEnterStoreTile() {
     return GestureDetector(
       onTap: () => Navigator.push(
@@ -703,7 +824,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         ),
       ),
       child: Container(
-        height: 150,
         width: double.infinity,
         decoration: BoxDecoration(
           color: _cardBg,
@@ -742,17 +862,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─── HOW IT WORKS TILE (State A — web, right column bottom) ─────────────────
   Widget _buildHowItWorksTile() {
     return GestureDetector(
       onTap: _launchYouTube,
       child: Container(
-        height: 80,
+        height: 85,
         width: double.infinity,
         decoration: BoxDecoration(
           color: _cardBg,
           border: Border.all(color: _divider),
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.04),
@@ -764,20 +883,31 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.play_circle_fill_rounded,
-                color: _brandRed, size: 28),
-            const SizedBox(width: 10),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: _brandRed.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.play_arrow_rounded,
+                  color: _brandRed, size: 28),
+            ),
+            const SizedBox(width: 12),
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text("How it works",
                     style: GoogleFonts.dmSans(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
                         color: _textPrimary)),
+                const SizedBox(height: 2),
                 Text("Watch 60 sec video",
-                    style: GoogleFonts.dmSans(fontSize: 10, color: _textMuted)),
+                    style: GoogleFonts.dmSans(
+                        fontSize: 11,
+                        color: _textMuted,
+                        fontWeight: FontWeight.w500)),
               ],
             ),
           ],
@@ -786,10 +916,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─── DYNAMIC ENGAGEMENT TILE (Replaces Install App) ─────────────────────────
   Widget _buildDynamicEngagementTile() {
     return StreamBuilder<QuerySnapshot>(
-      // 🚀 OPTIMIZATION: limit(1) avoids full collection scan. Index on isActive required.
       stream: FirebaseFirestore.instance
           .collection('engagement_campaigns')
           .where('isActive', isEqualTo: true)
@@ -801,7 +929,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
 
         final data = snapshot.data!.docs.first.data() as Map<String, dynamic>;
-        // 🚀 FIX: Access specific keys from the map, no null-aware operator on 'data' itself
         final type = data['type']?.toString() ?? 'DATA_COLLECTION';
         final reward = data['rewardValue']?.toString() ?? 'Reward';
         final sponsor = data['sponsorTenantId']?.toString() ?? 'Partner';
@@ -829,11 +956,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         }
 
         return GestureDetector(
-          onTap: () {
-            // Future implementation: Open Campaign BottomSheet
-          },
+          onTap: () {},
           child: Container(
-            height: 344,
             decoration: BoxDecoration(
               color: _cardBg,
               border: Border.all(color: _divider),
@@ -851,28 +975,28 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
                     color: color.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(icon, color: color, size: 36),
+                  child: Icon(icon, color: color, size: 30),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 12),
                 Text(title,
                     textAlign: TextAlign.center,
                     style: GoogleFonts.syne(
                         fontSize: 18,
                         fontWeight: FontWeight.w800,
                         color: _textPrimary)),
-                const SizedBox(height: 8),
+                const SizedBox(height: 4),
                 Text(sub,
                     textAlign: TextAlign.center,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: GoogleFonts.dmSans(
                         fontSize: 12, color: _textSecondary)),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
@@ -896,7 +1020,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildDefaultTaskTile() {
     return Container(
-      height: 344,
       decoration: BoxDecoration(
         color: _cardBg,
         border: Border.all(color: _divider),
@@ -919,9 +1042,9 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               color: _brandRedLight,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.star_rounded, color: _brandRed, size: 32),
+            child: const Icon(Icons.star_rounded, color: _brandRed, size: 28),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text("Daily",
               style: GoogleFonts.dmSans(fontSize: 12, color: _textMuted)),
           Text("Rewards &",
@@ -932,7 +1055,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Text("Offers",
               style: GoogleFonts.syne(
                   fontSize: 20, fontWeight: FontWeight.w800, color: _brandRed)),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           Text("Complete tasks to win!",
               textAlign: TextAlign.center,
               style: GoogleFonts.dmSans(fontSize: 11, color: _textSecondary)),
@@ -940,137 +1063,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       ),
     );
   }
+} // 🚀 THE FIX: Ye bracket _HomeScreenState class ko close karega!
 
-  // ─── TASKS TILE (State C — native, not in store, left column) ───────────────
-  Widget _buildTasksTile() {
-    return Container(
-      height: 244,
-      decoration: BoxDecoration(
-        color: _cardBg,
-        border: Border.all(color: _divider),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text("Your Tasks",
-              style: GoogleFonts.syne(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                  color: _textPrimary)),
-          const SizedBox(height: 12),
-          _buildTaskRow("Daily Check-in", Icons.check_circle_outline_rounded,
-              _activeGreen),
-          _buildTaskRow("Scratch & Win", Icons.card_giftcard_rounded, _amber),
-          _buildTaskRow("Spin Wheel", Icons.rotate_right_rounded, _brandRed),
-          const Spacer(),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            decoration: BoxDecoration(
-              color: _brandRedLight,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text("Stay tuned for more!",
-                textAlign: TextAlign.center,
-                style: GoogleFonts.dmSans(
-                    fontSize: 10,
-                    color: _brandRed,
-                    fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTaskRow(String label, IconData icon, Color color) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      height: 40,
-      decoration: BoxDecoration(
-        color: _cardSubtle,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Row(
-        children: [
-          Icon(icon, color: color, size: 18),
-          const SizedBox(width: 8),
-          Text(label,
-              style: GoogleFonts.dmSans(fontSize: 12, color: _textSecondary)),
-        ],
-      ),
-    );
-  }
-
-  // ─── GATE PASS TILE (all states) ─────────────────────────────────────────────
-  Widget _buildGatePassTile() {
-    return GestureDetector(
-      onTap: () => Navigator.push(context,
-          MaterialPageRoute(builder: (_) => const OrderHistoryScreen())),
-      child: Container(
-        height: 72,
-        decoration: BoxDecoration(
-          color: _cardBg,
-          border: Border.all(color: _divider),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            const SizedBox(width: 16),
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: _amber.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: const Icon(Icons.receipt_long_rounded,
-                  color: _amber, size: 22),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text("Gate Pass & History",
-                      style: GoogleFonts.syne(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: _textPrimary)),
-                  Text("View all your orders",
-                      style:
-                          GoogleFonts.dmSans(fontSize: 11, color: _textMuted)),
-                ],
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios_rounded,
-                color: _textMuted, size: 14),
-            const SizedBox(width: 16),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─── ZEPTO-LEVEL LIVE OFFERS AUTO-SLIDER ──────────────────────────────────────
 class DynamicLiveOffersBanner extends StatefulWidget {
   const DynamicLiveOffersBanner({super.key});
 
@@ -1080,11 +1074,28 @@ class DynamicLiveOffersBanner extends StatefulWidget {
 }
 
 class _DynamicLiveOffersBannerState extends State<DynamicLiveOffersBanner> {
-  final PageController _pageController = PageController();
-  Timer? _timer;
-  int _itemCount = 0;
   int _currentIndex = 0;
   bool _isPressed = false;
+  late PageController _pageController;
+  Timer? _timer;
+  int _currentOfferCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+
+    _timer = Timer.periodic(const Duration(milliseconds: 3500), (timer) {
+      if (_pageController.hasClients && _currentOfferCount > 1) {
+        int nextIndex = (_currentIndex + 1) % _currentOfferCount;
+        _pageController.animateToPage(
+          nextIndex,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeInOutCubic,
+        );
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -1093,192 +1104,254 @@ class _DynamicLiveOffersBannerState extends State<DynamicLiveOffersBanner> {
     super.dispose();
   }
 
-  void _updateTimer(int count) {
-    if (_itemCount == count) return;
-    _itemCount = count;
-    _timer?.cancel();
-
-    if (count > 1) {
-      _timer = Timer.periodic(const Duration(seconds: 4), (timer) {
-        if (_pageController.hasClients) {
-          int next = (_pageController.page?.round() ?? 0) + 1;
-          if (next >= count) {
-            _pageController.jumpToPage(0);
-          } else {
-            _pageController.animateToPage(next,
-                duration: const Duration(milliseconds: 800),
-                curve: Curves.fastOutSlowIn);
-          }
-        }
-      });
+  // 🎨 SMART UI MAPPER
+  Map<String, dynamic> _getThemeForOffer(
+      String type, double price, double dPrice, int bq, int fq) {
+    if (type == 'BOGO') {
+      return {
+        'tag': 'BOGO',
+        'title': 'Buy 1 Get 1 Free 🔥',
+        'icon': Icons.card_giftcard_rounded,
+        'colors': [const Color(0xFF6A1B9A), const Color(0xFFAB47BC)]
+      };
+    } else if (type == 'BUY_X_GET_Y' || type == 'COMBO') {
+      return {
+        'tag': 'BUY $bq GET $fq',
+        'title': 'Store Combos 🎁',
+        'icon': Icons.layers_rounded,
+        'colors': [const Color(0xFFE65100), const Color(0xFFFF7043)]
+      };
+    } else if (type == 'FLASH') {
+      return {
+        'tag': 'FLASH SALE',
+        'title': 'Limited Time ⚡',
+        'icon': Icons.flash_on_rounded,
+        'colors': [const Color(0xFFC62828), const Color(0xFFEF5350)]
+      };
+    } else if (type == 'CROSS') {
+      return {
+        'tag': 'CROSS OFFER',
+        'title': 'Buy & Unlock 🚀',
+        'icon': Icons.shuffle_rounded,
+        'colors': [const Color(0xFF0277BD), const Color(0xFF29B6F6)]
+      };
     }
+    int off = price > 0 ? ((price - dPrice) / price * 100).toInt() : 0;
+    return {
+      'tag': '${off > 0 ? '$off% OFF' : 'SALE'}',
+      'title': 'Special Discount 💥',
+      'icon': Icons.local_offer_rounded,
+      'colors': [const Color(0xFF00695C), const Color(0xFF26A69A)]
+    };
   }
 
-  // 🚀 MAPPING FUNCTION (Type -> UI Text)
-  Map<String, dynamic> _mapProductToUI(Map<String, dynamic> data) {
-    final type = data['clearanceType']?.toString().toUpperCase() ?? '';
-    final val = data['clearanceValue']?.toString() ??
-        data['discount']?.toString() ??
-        '';
-    final name = data['name']?.toString() ?? 'Selected Item';
-
-    String title = "Special Deal";
-    IconData icon = Icons.local_offer_rounded;
-
-    if (type == 'BOGO') {
-      title = "Buy 1 Get 1 Free";
-      icon = Icons.card_giftcard_rounded;
-    } else if (type == 'PERCENT' || type == 'FLAT_PERCENT') {
-      title = "$val% OFF";
-      icon = Icons.discount_rounded;
-    } else if (type == 'FLAT' || type == 'FLAT_AMOUNT') {
-      title = "₹$val OFF";
-      icon = Icons.savings_rounded;
-    } else if (type == 'COMBO') {
-      title = "Combo Deal";
-      icon = Icons.fastfood_rounded;
-    } else if (type == 'BUY_X_GET_Y') {
-      title = "Buy X Get Y";
-      icon = Icons.shopping_bag_rounded;
-    } else if (type == 'FLASH') {
-      title = "Flash Sale";
-      icon = Icons.flash_on_rounded;
-    }
-
-    return {"title": title, "sub": "on $name", "icon": icon};
+  // 🛡️ THE FALLBACK UI (Ab banner kabhi gayab nahi hoga!)
+  Widget _buildFallbackBanner(
+      {String tag = "OFFERS",
+      String title = "Stay Tuned!",
+      String sub = "Keep scanning for surprises",
+      IconData icon = Icons.local_offer_rounded}) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+            colors: [Color(0xFF2B32B2), Color(0xFF1488CC)]),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  margin: const EdgeInsets.only(bottom: 6),
+                  decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(6)),
+                  child: Text(tag,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1)),
+                ),
+                Text(title,
+                    maxLines: 1,
+                    style: GoogleFonts.syne(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white)),
+                const SizedBox(height: 2),
+                Text(sub,
+                    style:
+                        const TextStyle(color: Colors.white70, fontSize: 12)),
+              ],
+            ),
+          ),
+          Icon(icon, color: Colors.white, size: 36),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<QuerySnapshot>(
+      // 🚀 100% LIVE DATA FROM FIREBASE (Corrected Query)
       stream: FirebaseFirestore.instance
           .collection('products')
-          .where('clearanceActive', isEqualTo: true)
           .where('tenantId', isEqualTo: UserSession.tenantId)
-          .limit(7) // Top 7 live products
+          .where('clearanceActive', isEqualTo: true) // 👈 Sahi Field!
           .snapshots(),
       builder: (context, snapshot) {
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const SizedBox(); // No clutter if empty
-        }
+        bool hasOffers = snapshot.hasData && snapshot.data!.docs.isNotEmpty;
 
-        final docs = snapshot.data!.docs;
-        _updateTimer(docs.length);
+        if (hasOffers) {
+          _currentOfferCount = snapshot.data!.docs.length;
+        } else {
+          _currentOfferCount = 0;
+        }
 
         return GestureDetector(
           onTapDown: (_) => setState(() => _isPressed = true),
-          onTapCancel: () => setState(() => _isPressed = false),
           onTapUp: (_) {
             setState(() => _isPressed = false);
-            // 🚀 TEMPORARY DISABLED (File deleted by AI)
-            /*
             showModalBottomSheet(
               context: context,
               isScrollControlled: true,
               backgroundColor: Colors.transparent,
-              builder: (context) => StoreOffersSheet(),
+              builder: (context) => const StoreOffersSheet(),
             );
-            */
           },
+          onTapCancel: () => setState(() => _isPressed = false),
           child: AnimatedScale(
             scale: _isPressed ? 0.96 : 1.0,
             duration: const Duration(milliseconds: 150),
             curve: Curves.easeOutCubic,
             child: Container(
               width: double.infinity,
-              height: 125, // Premium Height
+              height:
+                  MediaQuery.of(context).size.width * 0.35, // 🔒 HEIGHT LOCKED
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [
-                    Color(0xFFD32F2F),
-                    Color(0xFFB71C1C)
-                  ], // Zepto-like Deep Red
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
                 borderRadius: BorderRadius.circular(18),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFFD32F2F).withOpacity(0.35),
-                    blurRadius: 18,
-                    offset: const Offset(0, 8),
-                  ),
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 15,
+                      offset: const Offset(0, 6)),
                 ],
               ),
               child: Stack(
                 children: [
-                  // 🚀 AUTO-SLIDER PAGE VIEW
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: PageView.builder(
+                  // 🚀 SHOW FALLBACK IF EMPTY, ELSE SHOW CAROUSEL
+                  if (!hasOffers)
+                    _buildFallbackBanner()
+                  else
+                    PageView.builder(
                       controller: _pageController,
-                      physics: const BouncingScrollPhysics(),
-                      itemCount: docs.length,
+                      itemCount: _currentOfferCount,
                       onPageChanged: (index) =>
                           setState(() => _currentIndex = index),
                       itemBuilder: (context, index) {
-                        final data = docs[index].data() as Map<String, dynamic>;
-                        final uiData = _mapProductToUI(data);
+                        final data = snapshot.data!.docs[index].data()
+                            as Map<String, dynamic>;
+                        final String name = data['name'] ?? 'Offer Item';
+                        final double price =
+                            double.tryParse(data['price']?.toString() ?? '0') ??
+                                0.0;
+                        final double dPrice = double.tryParse(
+                                data['discountPrice']?.toString() ??
+                                    price.toString()) ??
+                            price;
+                        final String type = data['clearanceType'] ?? 'DISCOUNT';
+                        final int buyQty = data['buyQty'] ?? 1;
+                        final int freeQty = data['freeQty'] ?? 1;
 
-                        return Padding(
+                        final theme = _getThemeForOffer(
+                            type, price, dPrice, buyQty, freeQty);
+
+                        return Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                                colors: theme['colors'],
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight),
+                            borderRadius: BorderRadius.circular(18),
+                          ),
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 20.0, vertical: 24.0),
+                              horizontal: 24, vertical: 16),
                           child: Row(
                             children: [
-                              Icon(uiData['icon'],
-                                  color: Colors.white, size: 40),
-                              const SizedBox(width: 16),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Text(uiData['title'],
-                                        style: GoogleFonts.syne(
-                                            fontSize: 22,
-                                            fontWeight: FontWeight.w800,
-                                            color: Colors.white)),
-                                    const SizedBox(height: 4),
-                                    Text(uiData['sub'],
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      margin: const EdgeInsets.only(bottom: 6),
+                                      decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.2),
+                                          borderRadius:
+                                              BorderRadius.circular(6)),
+                                      child: Text(theme['tag'],
+                                          style: const TextStyle(
+                                              color: Colors.white,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                              letterSpacing: 1)),
+                                    ),
+                                    Text(theme['title'],
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style: GoogleFonts.dmSans(
-                                            fontSize: 13,
-                                            color:
-                                                Colors.white.withOpacity(0.9))),
+                                        style: GoogleFonts.syne(
+                                            fontSize: 20,
+                                            fontWeight: FontWeight.w800,
+                                            color: Colors.white)),
+                                    const SizedBox(height: 2),
+                                    Text(name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 12)),
                                   ],
                                 ),
                               ),
-                              const Icon(Icons.chevron_right_rounded,
-                                  color: Colors.white, size: 28),
+                              const SizedBox(width: 10),
+                              Icon(theme['icon'],
+                                  color: Colors.white, size: 36),
                             ],
                           ),
                         );
                       },
                     ),
-                  ),
 
-                  // 🚀 DOT INDICATORS
-                  if (docs.length > 1)
+                  // 🟡 DOT INDICATOR
+                  if (hasOffers && _currentOfferCount > 1)
                     Positioned(
-                      bottom: 12,
+                      bottom: 8,
                       left: 0,
                       right: 0,
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
-                        children: List.generate(docs.length, (index) {
+                        children: List.generate(_currentOfferCount, (index) {
                           bool isActive = _currentIndex == index;
                           return AnimatedContainer(
                             duration: const Duration(milliseconds: 300),
                             margin: const EdgeInsets.symmetric(horizontal: 3),
-                            height: 5,
-                            width: isActive ? 16 : 5,
+                            height: 4,
+                            width: isActive ? 16 : 4,
                             decoration: BoxDecoration(
-                              color: isActive
-                                  ? Colors.white
-                                  : Colors.white.withOpacity(0.4),
-                              borderRadius: BorderRadius.circular(10),
-                            ),
+                                color: isActive
+                                    ? Colors.white
+                                    : Colors.white.withOpacity(0.4),
+                                borderRadius: BorderRadius.circular(10)),
                           );
                         }),
                       ),

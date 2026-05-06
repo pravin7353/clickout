@@ -95,7 +95,9 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
         setState(() => loading = false);
         _showError(err);
       },
-      onAutoLoginSuccess: () {
+      onAutoLoginSuccess: () async {
+        // 🚀 THE FIX: Firebase ko data save karne ke liye 500ms do
+        await Future.delayed(const Duration(milliseconds: 500));
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context,
@@ -119,7 +121,9 @@ class _LoginScreenState extends State<LoginScreen> with CodeAutoFill {
     await UnifiedAuthService.verifyManualOTP(
       verificationId: _verificationId!,
       otp: code,
-      onSuccess: () {
+      onSuccess: () async {
+        // 🚀 THE FIX: Memory aur DB save hone ka wait karo
+        await Future.delayed(const Duration(milliseconds: 500));
         if (mounted) {
           Navigator.pushAndRemoveUntil(
             context,

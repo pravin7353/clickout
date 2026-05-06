@@ -15,6 +15,8 @@ class CartItem {
   final String freeProductId;
   final String freeProductName;
   final double comboPrice;
+  final String offerHint; // 🚀 FIX: To show "Add 1 more" logic in UI
+  final int flashExpiry; // 🚀 FIX: To show Flash Sale Timer
 
   CartItem({
     required this.barcode,
@@ -33,6 +35,8 @@ class CartItem {
     this.freeProductId = '',
     this.freeProductName = '',
     this.comboPrice = 0.0,
+    this.offerHint = '',
+    this.flashExpiry = 0,
   });
 
   // 🚀 FIX: Accepts 0.0 as a valid price for FREE items (clearanceValue >= 0)
@@ -54,6 +58,8 @@ class CartItem {
 
   CartItem copyWith({
     String? name,
+    String? offerHint,
+    int? flashExpiry,
     double? originalPrice,
     double? gst,
     double? weight,
@@ -86,6 +92,8 @@ class CartItem {
       freeProductId: freeProductId ?? this.freeProductId,
       freeProductName: freeProductName ?? this.freeProductName,
       comboPrice: comboPrice ?? this.comboPrice,
+      offerHint: offerHint ?? this.offerHint,
+      flashExpiry: flashExpiry ?? this.flashExpiry,
     );
   }
 
@@ -106,6 +114,8 @@ class CartItem {
         'freeProductId': freeProductId,
         'freeProductName': freeProductName,
         'comboPrice': comboPrice,
+        'offerHint': offerHint,
+        'flashExpiry': flashExpiry,
       };
 
   factory CartItem.fromJson(Map<String, dynamic> json) => CartItem(
@@ -128,5 +138,7 @@ class CartItem {
         freeProductName: json['freeProductName'] ?? '',
         comboPrice:
             double.tryParse(json['comboPrice']?.toString() ?? '0') ?? 0.0,
+        offerHint: json['offerHint'] ?? '',
+        flashExpiry: json['flashExpiry'] ?? 0,
       );
 }

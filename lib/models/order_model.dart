@@ -61,7 +61,7 @@ class OrderModel {
     required this.branchCode,
     this.tenantId = '', // 👈 Default empty
     this.storeId = '', // 👈 Default empty
-    required this.deviceId,
+      required this.deviceId,
     required this.collectedBy,
     required this.paymentStatus,
     required this.qrConsumed,

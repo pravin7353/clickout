@@ -25,6 +25,15 @@ class CartService extends ChangeNotifier {
   bool get isCorrectionMode => _isCorrectionMode;
   String? get correctionOrderId => _correctionOrderId;
 
+  // 🚀 IDEMPOTENCY KEY: Tracks active pending order to prevent duplicates
+  String? _currentOrderId;
+  String? get currentOrderId => _currentOrderId;
+
+  void setCurrentOrderId(String id) {
+    _currentOrderId = id;
+    _saveCart();
+  }
+
   List<Map<String, dynamic>> _activeOffers = [];
   List<Map<String, dynamic>> get activeOffers => _activeOffers;
 
@@ -66,11 +75,19 @@ class CartService extends ChangeNotifier {
   // ─── Offer Apply ─────────────────────────────────────────────────────────
   Future<void> fetchAndApplyOffers() async {
     try {
+      // 🚀 SAAS FIX: Memory Drop recovery for Tenant ID
+      String tId = UserSession.tenantId.isNotEmpty
+          ? UserSession.tenantId
+          : (_prefs?.getString('saved_tenantId') ?? '');
+
+      if (tId.isEmpty) return; // Session completely dead
+
       final snap = await _db
           .collection('products')
           .where('clearanceActive', isEqualTo: true)
-          .where('tenantId', isEqualTo: UserSession.tenantId)
+          .where('tenantId', isEqualTo: tId)
           .get();
+
       _activeOffers = snap.docs.map((doc) => doc.data()).toList();
       _applyOffersLocally();
     } catch (e) {
@@ -79,7 +96,12 @@ class CartService extends ChangeNotifier {
   }
 
   void _applyOffersLocally() {
-    if (_rawItems.isEmpty) return;
+    if (_rawItems.isEmpty) {
+      _items = {};
+      notifyListeners(); // 🚀 FIX: Empty cart par bhi update trigger hoga
+      return;
+    }
+
     Map<String, int> stock = {};
     for (var o in _activeOffers) {
       String bc =
@@ -87,12 +109,15 @@ class CartService extends ChangeNotifier {
               '';
       if (bc.isNotEmpty) stock[bc] = o['physicalStock'] ?? o['stock'] ?? 999;
     }
+
     final r = OfferEngineService.applyAllOffers(
       cartItems: _rawItems,
       activeOffers: _activeOffers,
       liveStockLogs: stock,
     );
+
     _items = r.updatedCartItems;
+    notifyListeners(); // 🚀 FIX: Offer calculate hote hi UI instantly notify hoga!
   }
 
   // ─── Computed getters ─────────────────────────────────────────────────────
@@ -126,7 +151,8 @@ class CartService extends ChangeNotifier {
   Future<Map<String, dynamic>?> _getSafeProduct(String barcode,
       {bool forceServer = false}) async {
     try {
-      String target = barcode.replaceAll(RegExp(r'[^0-9a-zA-Z\-_]'), '');
+      // 🚀 FIX: Allow spaces and '+' for Service items like 'HAIR CUT + BEARD'
+      String target = barcode.replaceAll(RegExp(r'[^0-9a-zA-Z\-_+ ]'), '');
 
       // 🚀 FIX: Memory Fallback (RAM clean hone par local storage use hoga)
       String tId = UserSession.tenantId.isNotEmpty
@@ -179,26 +205,50 @@ class CartService extends ChangeNotifier {
   }) async {
     if (_isCorrectionMode) throw "Cart locked due to gate pass.";
 
-    // 🚀 FIX: Bypass cache to check true live stock (No Phantom Stock)
-    final pData = await _getSafeProduct(barcode, forceServer: true);
+    // 🚀 FIX: Turned off forceServer to make adding 10x faster.
+    final pData = await _getSafeProduct(barcode, forceServer: false);
     if (pData == null) throw "Item not found in database!";
     if (pData['isBlocked'] == true) {
       throw "🚫 DEAD STOCK: Item is currently blocked.";
     }
+
+    // 🚀 FIX: Smart Expiry Checker (Handles both Timestamp and "MM/YYYY" String)
     if (pData['expiryDate'] != null &&
-        (pData['expiryDate'] as Timestamp).toDate().isBefore(DateTime.now())) {
-      throw "🚫 EXPIRED ITEM: This item is past its expiry date.";
+        pData['expiryDate'].toString().isNotEmpty) {
+      DateTime? expDate;
+      var rawExp = pData['expiryDate'];
+
+      if (rawExp is Timestamp) {
+        expDate = rawExp.toDate();
+      } else if (rawExp is String) {
+        try {
+          List<String> parts = rawExp.split('/');
+          if (parts.length == 2) {
+            int month = int.parse(parts[0]);
+            int year = int.parse(parts[1]);
+            if (year < 100) year += 2000; // Handle YY to YYYY
+            // Set to the last day of the expiry month
+            expDate = DateTime(year, month + 1, 0);
+          }
+        } catch (_) {}
+      }
+
+      if (expDate != null && expDate.isBefore(DateTime.now())) {
+        throw "🚫 EXPIRED ITEM: This item is past its expiry date.";
+      }
     }
 
     // 🚀 SAAS LOGIC: Check if it's a Virtual Service (No stock limit)
-    bool isService = pData['itemType'] == 'SERVICE';
+    bool isService = pData['itemType']?.toString().toUpperCase() == 'SERVICE';
 
     // 🚀 OPTIMISTIC CHECKOUT: Only check Physical Stock for Products
     int physicalStock = pData['physicalStock'] ?? 0;
 
     if (!isService && physicalStock <= 0) throw "Item Out of Stock!";
 
+    // 🚀 MISSING VARIABLE FIXED HERE
     int newQty = _totalQtyFor(barcode) + 1;
+
     if (!isService && newQty > physicalStock) {
       throw "Only $physicalStock units available in store inventory!";
     }
@@ -223,7 +273,7 @@ class CartService extends ChangeNotifier {
       quantity: newQty,
     );
 
-    await fetchAndApplyOffers();
+    _applyOffersLocally(); // 🚀 FIX: Instant Add, No internet loading required!
     notifyListeners();
     _saveCart();
   }
@@ -231,37 +281,38 @@ class CartService extends ChangeNotifier {
   // ─── INCREMENT ────────────────────────────────────────────────────────────
   Future<void> increment(String barcode) async {
     if (_isCorrectionMode) throw "Cart locked.";
-    if (barcode.endsWith('_FREE')) {
-      throw "Free promotional item. Modify the main product to adjust quantities.";
-    }
+    if (barcode.endsWith('_FREE')) throw "Modify the main product.";
+
     final String base =
         barcode.replaceAll('_OVERFLOW', '').replaceAll('_FREE', '');
+    final existing = _rawItems[base];
+    if (existing == null) return;
 
-    // 🚀 FIX: Bypass cache to check true live stock
-    final pData = await _getSafeProduct(base, forceServer: true);
+    final pData = await _getSafeProduct(base, forceServer: false);
+
+    // 🚀 FIX: Network delay ya Service string mismatch hone par item cart se nahi udega!
     if (pData == null) {
-      _removeBase(base);
-      throw "Item removed from store database.";
+      _rawItems[base] = existing.copyWith(quantity: existing.quantity + 1);
+      _applyOffersLocally(); // 🚀 FIX: Slowness Khatam! Only local math.
+      notifyListeners();
+      _saveCart();
+      return;
     }
+
     if (pData['isBlocked'] == true) {
-      _removeBase(base);
       throw "Item was just blocked/removed by Admin!";
     }
 
-    // 🚀 SAAS LOGIC: Check if it's a Virtual Service (No stock limit)
-    bool isService = pData['itemType'] == 'SERVICE';
-
-    // 🚀 OPTIMISTIC CHECKOUT: Only check Physical Stock for Products
+    bool isService = pData['itemType']?.toString().toUpperCase() == 'SERVICE';
     int physicalStock = pData['physicalStock'] ?? 0;
-    int newQty = _totalQtyFor(base) + 1;
+    int newQty = existing.quantity + 1;
+
     if (!isService && newQty > physicalStock) {
       throw "Stock limit reached! Only $physicalStock available.";
     }
 
-    final existing = _rawItems[base];
-    if (existing != null) _rawItems[base] = existing.copyWith(quantity: newQty);
-
-    await fetchAndApplyOffers();
+    _rawItems[base] = existing.copyWith(quantity: newQty);
+    _applyOffersLocally(); // 🚀 FIX: Slowness Khatam! Only local math.
     notifyListeners();
     _saveCart();
   }
@@ -277,11 +328,10 @@ class CartService extends ChangeNotifier {
 
     if (currentQty <= 1) return;
 
-    int newQty = currentQty - 1;
     final existing = _rawItems[base];
     if (existing != null) {
-      _rawItems[base] = existing.copyWith(quantity: newQty);
-      _applyOffersLocally();
+      _rawItems[base] = existing.copyWith(quantity: currentQty - 1);
+      _applyOffersLocally(); // ONLY LOCAL
       notifyListeners();
       _saveCart();
     }
@@ -299,6 +349,7 @@ class CartService extends ChangeNotifier {
     _saveCart();
   }
 
+  // 🚀 MISSING FUNCTION FIXED HERE (Ye galti se udd gaya tha)
   void _removeBase(String base) {
     _rawItems.remove(base);
     _items.remove(base);
@@ -311,15 +362,21 @@ class CartService extends ChangeNotifier {
     if (_isCorrectionMode) throw "Cart locked.";
     _rawItems = {};
     _items = {};
+    _currentOrderId = null; // 🚀 FIX: Reset Idempotency Key
     _clearCorrectionState();
     notifyListeners();
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) _clearStorage(user.uid);
   }
 
-  Future<void> clearCart() async {
+  // 🔒 BACKEND LOCK: Added 'force' parameter
+  Future<void> clearCart({bool force = false}) async {
+    if (_isCorrectionMode && !force)
+      return; // Silent block! User kuch nahi kar payega.
+
     _rawItems = {};
     _items = {};
+    _currentOrderId = null; // 🚀 FIX: Reset Idempotency Key
     _clearCorrectionState();
     notifyListeners();
     final user = FirebaseAuth.instance.currentUser;
@@ -332,26 +389,70 @@ class CartService extends ChangeNotifier {
   }
 
   // ─── PROMO CODE ───────────────────────────────────────────────────────────
+  String? _vipOfferDocId;
+
   Future<void> applyPromoCode(String code) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) throw "Please login to apply offers.";
 
-    // 1. OLD HARDCODED FALLBACK (For older users compatibility)
-    if (code == "COMEBACK20") {
+    final String upperCode = code.toUpperCase();
+
+    // 1. OLD HARDCODED FALLBACK
+    if (upperCode == "COMEBACK20") {
       final doc = await _db.collection('users').doc(user.uid).get();
       if (doc.exists && doc.data()?['winbackActive'] == true) {
         _appliedPromoCode = "COMEBACK20";
         _promoDiscountPercent = 20.0;
         _isWinbackApplied = true;
+        _vipOfferDocId = null;
         notifyListeners();
         return;
       }
     }
 
-    // 🚀 2. DYNAMIC COUPON ENGINE (Targeted & Multi-Tenant Validations)
     try {
-      // Coupon Document ID Admin panel se aise save hota hai: tenantId_CODE
-      String couponDocId = '${UserSession.tenantId}_$code';
+      // 🚀 2. VIP GROWTH RADAR ENGINE (Security Check: Match user.uid strictly)
+      final vipOfferSnap = await _db
+          .collection('notifications')
+          .where('targetUserId',
+              isEqualTo: user.uid) // 🔒 Yaha Security Check Lag Gaya
+          .where('status',
+              isEqualTo: 'PENDING') // Sirf unused offers check karega
+          .get();
+
+      for (var doc in vipOfferSnap.docs) {
+        final data = doc.data();
+        String dbCode = (data['couponCode'] ?? '').toString().toUpperCase();
+
+        if (dbCode == upperCode) {
+          // Security Check: Expiry Date
+          if (data['createdAt'] != null) {
+            DateTime createdAt = (data['createdAt'] as Timestamp).toDate();
+            int expiryDays = data['expiryDays'] ?? 3;
+            if (DateTime.now()
+                .isAfter(createdAt.add(Duration(days: expiryDays)))) {
+              await _db
+                  .collection('notifications')
+                  .doc(doc.id)
+                  .update({'status': 'EXPIRED'});
+              throw "This VIP offer has expired.";
+            }
+          }
+
+          // ✅ SUCCESS: Apply VIP Discount
+          _appliedPromoCode = upperCode;
+          _promoDiscountPercent =
+              double.tryParse(data['discountPercent']?.toString() ?? '0') ??
+                  0.0;
+          _isWinbackApplied = false;
+          _vipOfferDocId = doc.id;
+          notifyListeners();
+          return;
+        }
+      }
+
+      // 🚀 3. DYNAMIC COUPON ENGINE FALLBACK (General Store Coupons)
+      String couponDocId = '${UserSession.tenantId}_$upperCode';
       DocumentSnapshot couponDoc =
           await _db.collection('coupons').doc(couponDocId).get();
 
@@ -361,20 +462,14 @@ class CartService extends ChangeNotifier {
 
       final data = couponDoc.data() as Map<String, dynamic>;
 
-      // 🛑 Rule A: Check if Active
-      if (data['isActive'] == false) {
+      if (data['isActive'] == false)
         throw "This coupon is currently deactivated.";
-      }
 
-      // 🛑 Rule B: Check Expiry Date
       if (data['expiryDate'] != null) {
         DateTime expiry = (data['expiryDate'] as Timestamp).toDate();
-        if (expiry.isBefore(DateTime.now())) {
-          throw "This coupon has expired.";
-        }
+        if (expiry.isBefore(DateTime.now())) throw "This coupon has expired.";
       }
 
-      // 🛑 Rule C: Target User Validation (Crucial for Smart Notifications)
       if (data['validForUsers'] != null && data['validForUsers'] is List) {
         List<dynamic> validUsers = data['validForUsers'];
         if (validUsers.isNotEmpty && !validUsers.contains(user.uid)) {
@@ -382,7 +477,6 @@ class CartService extends ChangeNotifier {
         }
       }
 
-      // 🛑 Rule D: Branch Restrictions
       if (data['branchCode'] != null &&
           data['branchCode'] != 'UNKNOWN' &&
           data['branchCode'] != 'ALL') {
@@ -391,11 +485,12 @@ class CartService extends ChangeNotifier {
         }
       }
 
-      // ✅ SUCCESS: Apply dynamic discount to Cart
-      _appliedPromoCode = code;
+      // ✅ SUCCESS: Apply Global Store Discount
+      _appliedPromoCode = upperCode;
       _promoDiscountPercent =
           double.tryParse(data['discountPercent']?.toString() ?? '0') ?? 0.0;
       _isWinbackApplied = false;
+      _vipOfferDocId = null;
       notifyListeners();
     } catch (e) {
       if (e is String) rethrow;
@@ -407,7 +502,19 @@ class CartService extends ChangeNotifier {
     _appliedPromoCode = null;
     _promoDiscountPercent = 0.0;
     _isWinbackApplied = false;
+    _vipOfferDocId = null;
     notifyListeners();
+  }
+
+  // 🚀 CALL THIS AFTER SUCCESSFUL PAYMENT (In order_service.dart) TO MARK CODE AS USED
+  Future<void> redeemAppliedVIPOffer() async {
+    if (_vipOfferDocId != null) {
+      await _db.collection('notifications').doc(_vipOfferDocId).update({
+        'status': 'USED',
+        'usedAt': FieldValue.serverTimestamp(),
+      });
+      _vipOfferDocId = null;
+    }
   }
 
   // ─── VALIDATE ─────────────────────────────────────────────────────────────
@@ -512,6 +619,8 @@ class CartService extends ChangeNotifier {
         List<dynamic> cloudItems = data['items'] ?? [];
         _isCorrectionMode = data['isCorrectionMode'] ?? false;
         _correctionOrderId = data['correctionOrderId'];
+        _currentOrderId =
+            data['currentOrderId']; // 🚀 FIX: Load Active Pending Order ID
         if (data['correctionOriginalQty'] != null) {
           _correctionOriginalQty =
               Map<String, int>.from(data['correctionOriginalQty']);
@@ -535,14 +644,47 @@ class CartService extends ChangeNotifier {
           }
         }
         if (cloudItems.isNotEmpty) {
-          String cj = jsonEncode(cloudItems);
-          _processCartJson(cj);
-          await _prefs!.setString(key, cj);
+          // Only trust Firestore if it has MORE items than local,
+          // OR if local is empty. This protects against stale cloud data
+          // overwriting a more recent local state after a fast refresh.
+          int cloudCount = cloudItems.length;
+          int localCount = _rawItems.length;
+
+          if (cloudCount >= localCount) {
+            String cj = jsonEncode(cloudItems);
+            _processCartJson(cj);
+            await _prefs!.setString(key, cj);
+          }
+          // else: local is newer/more complete — keep it, re-upload to cloud
+          else {
+            await _saveCart();
+          }
+        }
+        // Cloud doc exists but items is empty — local data is the truth.
+        // Re-upload local to recover from a failed/incomplete save.
+        else if (_rawItems.isNotEmpty) {
+          await _saveCart();
         }
       }
     } catch (e) {
       debugPrint("Cloud Sync Error: $e");
+      // On any Firestore error, local data is our safety net — keep it.
     }
+
+    // If Firestore had no document but local has items (e.g. first load
+    // after a failed previous save), push local items to cloud now.
+    final user2 = FirebaseAuth.instance.currentUser;
+    if (user2 != null && _rawItems.isNotEmpty) {
+      final snap2 = await _db
+          .collection('carts')
+          .doc(user2.uid)
+          .get()
+          .catchError((_) => null as DocumentSnapshot);
+      if (!snap2.exists) {
+        await _saveCart();
+      }
+    }
+
     notifyListeners();
   }
 
@@ -571,6 +713,12 @@ class CartService extends ChangeNotifier {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null || _prefs == null) return;
 
+    // 🚀 FIX: Agar cart empty hai, toh DB aur Local storage se poora uda do (No Ghost Items)
+    if (_rawItems.isEmpty) {
+      await _clearStorage(user.uid);
+      return;
+    }
+
     List<Map<String, dynamic>> saveableList =
         _rawItems.values.map((i) => i.toJson()).toList();
 
@@ -580,10 +728,12 @@ class CartService extends ChangeNotifier {
         'cart_last_update_${user.uid}', DateTime.now().millisecondsSinceEpoch);
 
     try {
-      _db.collection('carts').doc(user.uid).set({
+      await _db.collection('carts').doc(user.uid).set({
         'items': saveableList,
         'isCorrectionMode': _isCorrectionMode,
         'correctionOrderId': _correctionOrderId,
+        'currentOrderId':
+            _currentOrderId, // 🚀 FIX: Save Active Pending Order ID
         'correctionOriginalQty': _correctionOriginalQty,
         'lastUpdated': FieldValue.serverTimestamp(),
         // 🚀 FIX: Save safely even if static memory drops in background

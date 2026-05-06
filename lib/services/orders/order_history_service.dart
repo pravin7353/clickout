@@ -6,29 +6,22 @@ import '../../utils/user_session.dart';
 class OrderHistoryService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // 📜 FETCH PAST ORDERS FOR USER PROFILE
-  Future<List<Map<String, dynamic>>> getUserOrderHistory(String userId) async {
-    try {
-      // Fetching only completed or exited orders
-      final snapshot = await _db
-          .collection('orders')
-          .where('userId', isEqualTo: userId)
-          .where('tenantId',
-              isEqualTo: UserSession.tenantId) // 🚀 SAAS INJECTION
-          .where('paymentStatus', isEqualTo: 'PAID')
-          .orderBy('timestamp', descending: true)
-          .limit(20) // Limit for pagination/performance
-          .get();
-
-      return snapshot.docs.map((doc) {
-        Map<String, dynamic> data = doc.data();
-        data['orderId'] = doc.id; // Injecting document ID for UI reference
-        return data;
-      }).toList();
-    } catch (e) {
-      debugPrint("Order History Fetch Error: $e");
-      return [];
-    }
+  // 📜 FIX: Converted to STREAM for real-time status updates!
+  Stream<List<Map<String, dynamic>>> getUserOrderHistoryStream(String userId) {
+    return _db
+        .collection('orders')
+        .where('userId', isEqualTo: userId)
+        .where('tenantId', isEqualTo: UserSession.tenantId)
+        .where('paymentStatus',
+            isEqualTo: 'PAID') // Hata sakte ho agar PENDING bhi dikhana hai
+        .orderBy('timestamp', descending: true)
+        .limit(30)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) {
+              Map<String, dynamic> data = doc.data();
+              data['orderId'] = doc.id;
+              return data;
+            }).toList());
   }
 
   // 🧾 FETCH SINGLE ORDER DETAILS (For viewing digital receipt)

@@ -30,6 +30,23 @@ class PdfInvoiceService {
       Map<String, dynamic> data, String id) async {
     final pdf = pw.Document();
 
+    // 🚀 1. FETCH DYNAMIC T&C FROM ADMIN PANEL
+    String termsAndConditions =
+        "1. Exchange within 7 days with original receipt.\n2. Goods once sold will not be refunded.";
+    try {
+      String tId = data['tenantId']?.toString() ?? '';
+      if (tId.isNotEmpty) {
+        var tDoc = await FirebaseFirestore.instance
+            .collection('tenants')
+            .doc(tId)
+            .get();
+        if (tDoc.exists && tDoc.data()!.containsKey('invoiceConfig')) {
+          termsAndConditions =
+              tDoc.data()!['invoiceConfig']['terms'] ?? termsAndConditions;
+        }
+      }
+    } catch (_) {}
+
     // Font fix for Rupee Symbol
     final ttf = await PdfGoogleFonts.robotoRegular();
     final ttfBold = await PdfGoogleFonts.robotoBold();
@@ -110,6 +127,36 @@ class PdfInvoiceService {
     double totalSavings = totalOriginalMRP - totalMRP;
     if (totalSavings < 0) totalSavings = 0;
 
+    // 🧠 2. SMART TITLE & DYNAMIC DATA LOGIC
+    String invoiceNumber =
+        data['invoiceNo']?.toString() ?? id; // 🚀 DB SE NAYA NUMBER UTHAYEGA
+    String documentTitle =
+        totalGSTAmount > 0.0 ? "TAX INVOICE" : "BILL OF SUPPLY";
+    String branchCode = data['branchCode']?.toString() ?? 'STORE';
+    String storeName = data['storeName']?.toString() ?? branchCode;
+
+    // Fetch actual Store Name from DB
+    try {
+      if (branchCode.isNotEmpty && branchCode != 'STORE') {
+        var sSnap = await FirebaseFirestore.instance
+            .collection('stores')
+            .where('branchCode', isEqualTo: branchCode)
+            .limit(1)
+            .get();
+        if (sSnap.docs.isNotEmpty) {
+          storeName = (sSnap.docs.first.data()['storeName'] ??
+                  sSnap.docs.first.data()['branchName'] ??
+                  storeName)
+              .toString()
+              .toUpperCase();
+        }
+      }
+    } catch (_) {}
+    String cashierName = data['scannedByName']?.toString() ?? '';
+    String guardName =
+        data['verifiedByGuardId']?.toString() ?? 'Pending Approval';
+    String paymentMode = data['paymentMode']?.toString() ?? 'Online';
+
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -121,12 +168,12 @@ class PdfInvoiceService {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Text("CLICKOUT",
+                  pw.Text(storeName, // 🚀 Dynamic Store Name
                       style: pw.TextStyle(
                           fontSize: 24,
                           fontWeight: pw.FontWeight.bold,
                           color: PdfColors.red)),
-                  pw.Text("TAX INVOICE",
+                  pw.Text(documentTitle, // 🚀 Math Decided Title
                       style: pw.TextStyle(
                           fontSize: 18, fontWeight: pw.FontWeight.bold)),
                 ],
@@ -139,13 +186,19 @@ class PdfInvoiceService {
                   pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
-                        pw.Text("Billed To: ${data['userName'] ?? 'Customer'}"),
-                        pw.Text("Mode: ${data['paymentMode'] ?? 'Online'}"),
+                        pw.Text(
+                            "Billed To: ${data['customerName'] ?? data['userId'] ?? 'Unknown'}"),
+                        pw.Text("Mode: $paymentMode"),
+                        if (paymentMode == 'CASH' && cashierName.isNotEmpty)
+                          pw.Text(
+                              "Cashier: $cashierName"), // 🚀 Cashier Name added
+                        pw.Text(
+                            "Exit Approved By: $guardName"), // 🚀 Guard Name added
                       ]),
                   pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.end,
                       children: [
-                        pw.Text("Invoice #: $id"),
+                        pw.Text("Invoice #: $invoiceNumber"),
                         pw.Text("Date: $dateStr"),
                       ]),
                 ],
@@ -207,8 +260,15 @@ class PdfInvoiceService {
                         ? "${(itemWgt / 1000).toStringAsFixed(2)}kg"
                         : "${itemWgt.toStringAsFixed(0)}g";
 
+                    // 🚀 3. OFFER LOGIC: Add [FREE] tag if applicable
+                    String itemName = e['name']?.toString() ?? 'Unknown Item';
+                    String clearanceType = e['clearanceType']?.toString() ?? '';
+                    if (mrp == 0 || clearanceType == 'FREE_ITEM') {
+                      itemName = "[FREE] $itemName";
+                    }
+
                     return [
-                      e['name']?.toString() ?? 'Unknown Item',
+                      itemName,
                       qty.toStringAsFixed(0),
                       itemWgtStr,
                       mrp.toStringAsFixed(2),
@@ -252,6 +312,20 @@ class PdfInvoiceService {
                                 fontSize: 10, color: PdfColors.grey)),
                       ]),
                 ],
+              ),
+              pw.SizedBox(height: 30),
+
+              // 📜 4. DYNAMIC TERMS & CONDITIONS
+              pw.Divider(thickness: 1, color: PdfColors.grey400),
+              pw.Text(
+                "Terms & Conditions:",
+                style:
+                    pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                termsAndConditions,
+                style: pw.TextStyle(fontSize: 8, color: PdfColors.grey800),
               ),
             ],
           );

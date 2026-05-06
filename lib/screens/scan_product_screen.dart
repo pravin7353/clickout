@@ -1,9 +1,10 @@
+import '../widgets/shared_cart_item_card.dart';
 import 'dart:convert'; // 🚀 CRITICAL FOR BASE64 DECODING
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+//import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -12,7 +13,9 @@ import '../services/firestore/firestore_service.dart';
 import '../services/cart/cart_service.dart';
 import '../services/session_service.dart'; // 🚀 SAAS SESSION ENGINE
 import 'dart:ui'; // 🚀 Added for ImageFilter.blur
-import '../services/system/store_entry_service.dart';
+import 'cart_screen.dart'; // 🚀 NAYA: Cart Screen par bhejne ke liye
+//import '../services/system/store_entry_service.dart';
+import '../models/cart_item.dart';
 
 class ScanProductScreen extends StatefulWidget {
   final bool isEntryMode; // 🚀 NAYA VARIABLE
@@ -141,19 +144,19 @@ class _ScanProductScreenState extends State<ScanProductScreen>
     final now = DateTime.now();
     if (_isBlocked) return;
 
+    // 🚀 FIX: Ignore extra frames immediately to prevent fake spam blocks
+    if (_isProcessing ||
+        (_lastScanTime != null &&
+            now.difference(_lastScanTime!) < const Duration(seconds: 3))) {
+      return;
+    }
+
     _scanAttempts.add(now);
     _scanAttempts
         .removeWhere((t) => now.difference(t) > const Duration(seconds: 2));
 
     if (_scanAttempts.length >= 4) {
       _triggerSpamBlock();
-      return;
-    }
-
-    if (_isProcessing ||
-        (_lastScanTime != null &&
-            // 🚀 SCAN SPEED SLOWED: Delay increased to 3 seconds between scans
-            now.difference(_lastScanTime!) < const Duration(seconds: 3))) {
       return;
     }
 
@@ -320,218 +323,501 @@ class _ScanProductScreenState extends State<ScanProductScreen>
 
   @override
   Widget build(BuildContext context) {
-    final cart = context.read<CartService>();
+    final cart = context.watch<CartService>();
+    final topCameraHeight = MediaQuery.of(context).size.height * 0.40;
+
+    // 🚀 1. Group items using Shared Widget Logic
+    final List<CartGroup> groupedList = buildCartGroups(cart.items);
 
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: const Color(0xFFF6F6F4), // Light grey background
       body: Stack(
         children: [
-          MobileScanner(
-            controller: scannerController,
-            onDetect: (capture) {
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                if (barcode.rawValue != null) {
-                  _handleScan(barcode.rawValue!, cart);
-                  break;
-                }
-              }
-            },
-          ),
-          // 🚀 GAUSSIAN BLUR ADDED BEHIND SCANNER MASK
-          Positioned.fill(
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 8.0, sigmaY: 8.0),
-              child: Container(color: Colors.transparent),
-            ),
-          ),
-          ColorFiltered(
-            colorFilter:
-                const ColorFilter.mode(Colors.black54, BlendMode.srcOut),
-            child: Stack(
-              children: [
-                Container(
-                    decoration: const BoxDecoration(
-                        color: Colors.transparent,
-                        backgroundBlendMode: BlendMode.dstOut)),
-                // 🚀 MOVED TO TOP (-0.4 alignment)
-                Align(
-                  alignment: const Alignment(0.0, -0.4),
-                  child: Container(
-                    height: 280,
-                    width: 280,
-                    decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(20)),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // 🚀 MOVED TO TOP (-0.4 alignment)
-          Align(
-            alignment: const Alignment(0.0, -0.4),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 300),
-              height: 280,
-              width: 280,
-              decoration: BoxDecoration(
-                border: Border.all(
-                    color: _getBorderColor(), width: _isBlocked ? 8 : 4),
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                      color: _getBorderColor().withOpacity(0.5),
-                      blurRadius: _isBlocked ? 40 : 20,
-                      spreadRadius: 2)
-                ],
-              ),
-              child: Stack(
-                children: [
-                  // 🚀 BRACKET ANIMATION (In & Out motion)
-                  AnimatedBuilder(
-                    animation: _bracketController,
-                    builder: (ctx, child) {
-                      final offset = _bracketController.value *
-                          8.0; // 8px ka sliding effect
-                      return Stack(
-                        children: [
-                          Positioned(
-                              top: offset,
-                              left: offset,
-                              child: _cornerWidget(_getBorderColor())),
-                          Positioned(
-                              top: offset,
-                              right: offset,
-                              child: RotatedBox(
-                                  quarterTurns: 1,
-                                  child: _cornerWidget(_getBorderColor()))),
-                          Positioned(
-                              bottom: offset,
-                              left: offset,
-                              child: RotatedBox(
-                                  quarterTurns: 3,
-                                  child: _cornerWidget(_getBorderColor()))),
-                          Positioned(
-                              bottom: offset,
-                              right: offset,
-                              child: RotatedBox(
-                                  quarterTurns: 2,
-                                  child: _cornerWidget(_getBorderColor()))),
-                        ],
-                      );
-                    },
-                  ),
-                  if (_isBlocked)
-                    const Center(
-                        child: Icon(Icons.block, color: Colors.red, size: 80)),
+          // 🟩 LAYER 1: THE SMART LIST (Scrolls behind the camera)
+          Column(
+            children: [
+              // This acts as a spacer so the list starts *below* the camera normally,
+              // but can scroll *up* behind it.
+              SizedBox(height: topCameraHeight),
 
-                  // 🚀 HAPPY SUCCESS ANIMATION (Bouncing Checkmark)
-                  if (_scanStatus == ScanStatus.success)
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0.0, end: 1.0),
-                      duration: const Duration(milliseconds: 500),
-                      curve: Curves.elasticOut,
-                      builder: (context, scale, child) => Center(
-                        child: Transform.scale(
-                          scale: scale,
-                          child: const Icon(Icons.check_circle,
-                              color: Colors.greenAccent, size: 100),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-          SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Align(
-                alignment: Alignment.topLeft,
-                child: _glassButton(
-                    icon: Icons.arrow_back_ios_new,
-                    onTap: () => Navigator.pop(context)),
-              ),
-            ),
-          ),
-          // 🚀 MOVED TORCH AND GALLERY TO BOTTOM
-          Positioned(
-            bottom: 60,
-            left: 0,
-            right: 0,
-            child: Column(
-              children: [
-                if (_isBlocked)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 20),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                    decoration: BoxDecoration(
-                        color: Colors.redAccent,
-                        borderRadius: BorderRadius.circular(20)),
-                    child: const Text("SCANNER BLOCKED (Too Fast)",
-                        style: TextStyle(
-                            color: Colors.white, fontWeight: FontWeight.bold)),
-                  ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+              // Cart Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 15, 20, 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // 🔦 TORCH BUTTON
-                    _glassButton(
-                        icon: _isFlashOn ? Icons.flash_on : Icons.flash_off,
-                        color: _isFlashOn ? Colors.yellow : Colors.white,
-                        onTap: _toggleFlash),
-                    if (!kIsWeb) const SizedBox(width: 20),
-                    // 🖼️ GALLERY BUTTON
-                    if (!kIsWeb)
-                      GestureDetector(
-                        onTap: () => _pickFromGallery(cart),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 20, vertical: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(30),
-                            border: Border.all(color: Colors.white30),
-                          ),
-                          child: const Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.image, color: Colors.white),
-                              SizedBox(width: 10),
-                              Text("Gallery",
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold)),
-                            ],
-                          ),
-                        ),
-                      ),
+                    Text("Scanned Items (${cart.totalItems})",
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w900)),
+                    Text("₹${cart.grandTotal.toStringAsFixed(0)}",
+                        style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFFC53030))),
                   ],
                 ),
-              ],
+              ),
+
+              // The Actual List
+              Expanded(
+                child: groupedList.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.qr_code_scanner,
+                                size: 50, color: Colors.grey.withOpacity(0.3)),
+                            const SizedBox(height: 10),
+                            const Text("Scan a product to start",
+                                style: TextStyle(color: Colors.grey)),
+                          ],
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(
+                            16, 0, 16, 100), // Extra padding for bottom button
+                        physics: const BouncingScrollPhysics(),
+                        itemCount: groupedList.length,
+                        itemBuilder: (context, index) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: SharedCartItemCard(
+                                group: groupedList[index], cart: cart),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+
+          // 🟩 LAYER 2: THE FLOATING CAMERA (Top 40%)
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: topCameraHeight,
+            child: ClipRRect(
+              borderRadius:
+                  const BorderRadius.vertical(bottom: Radius.circular(30)),
+              child: Stack(
+                children: [
+                  MobileScanner(
+                    controller: scannerController,
+                    onDetect: (capture) {
+                      final List<Barcode> barcodes = capture.barcodes;
+                      for (final barcode in barcodes) {
+                        if (barcode.rawValue != null) {
+                          _handleScan(barcode.rawValue!, cart);
+                          break;
+                        }
+                      }
+                    },
+                  ),
+
+                  // 🚀 CLEAN & MINIMAL SCANNER BOX (No annoying animations)
+                  ColorFiltered(
+                    colorFilter: const ColorFilter.mode(
+                        Colors.black54, BlendMode.srcOut),
+                    child: Stack(
+                      children: [
+                        Container(
+                            decoration: const BoxDecoration(
+                                color: Colors.transparent,
+                                backgroundBlendMode: BlendMode.dstOut)),
+                        Align(
+                          alignment: Alignment.center,
+                          child: Container(
+                            height: 200,
+                            width: 260,
+                            decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(24)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Simple Static Border to highlight the cutout (Optional but looks clean)
+                  Align(
+                    alignment: Alignment.center,
+                    child: Container(
+                      height: 200,
+                      width: 260,
+                      decoration: BoxDecoration(
+                          border: Border.all(
+                              color: Colors.white.withOpacity(0.5), width: 2),
+                          borderRadius: BorderRadius.circular(24)),
+                    ),
+                  ),
+
+                  // Simple Static Indicators
+                  if (_isProcessing ||
+                      _scanStatus == ScanStatus.success ||
+                      _isBlocked)
+                    Center(
+                      child: _isBlocked
+                          ? const Icon(Icons.block, color: Colors.red, size: 80)
+                          : _scanStatus == ScanStatus.success
+                              ? const Icon(Icons.check_circle,
+                                  color: Colors.greenAccent, size: 80)
+                              : const CircularProgressIndicator(
+                                  color: Colors.redAccent),
+                    ),
+
+                  // Top Action Buttons
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16.0, vertical: 8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _glassButton(
+                              icon: Icons.arrow_back_ios_new,
+                              onTap: () => Navigator.pop(context)),
+                          _glassButton(
+                            icon: _isFlashOn ? Icons.flash_on : Icons.flash_off,
+                            color: _isFlashOn ? Colors.yellow : Colors.white,
+                            onTap: _toggleFlash,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          if (_isProcessing && _scanStatus == ScanStatus.idle && !_isBlocked)
-            Container(
-                color: Colors.black54,
-                child: Center(
-                    child: CircularProgressIndicator(color: cherryRedLight))),
+
+          // 🟩 LAYER 3: FIXED BOTTOM BUTTON
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, -4))
+                ],
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFC53030), // Brand Red
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: cart.items.isEmpty
+                      ? null
+                      : () {
+                          // 🚀 NAYA: Seedha Cart Screen par bhejo aur scanner ko hata do
+                          Navigator.pushReplacement(
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => const CartScreen()),
+                          );
+                        },
+                  icon: const Icon(Icons.shopping_cart_checkout),
+                  label: const Text("VIEW FULL CART",
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          letterSpacing: 1)),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _cornerWidget(Color color) {
-    return Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(
-        border: Border(
-            top: BorderSide(color: color, width: 4),
-            left: BorderSide(color: color, width: 4)),
-        borderRadius: const BorderRadius.only(topLeft: Radius.circular(20)),
+  // 🚀 THE SMART GROUP CARD (Exact copy of cart_screen logic but compact)
+  Widget _buildSmartGroupCard(CartGroup group, CartService cart) {
+    final base = group.baseItem;
+    final free = group.freeItem;
+    final overflow = group.overflowItem;
+
+    if (base == null && free == null && overflow == null)
+      return const SizedBox.shrink();
+
+    final display = base ?? overflow ?? free!;
+    final int paidQty = (base?.quantity ?? 0) + (overflow?.quantity ?? 0);
+    final int freeQty = free?.quantity ?? 0;
+    final int totalQty = paidQty + freeQty;
+    // 🚀 FIX: 0 ko 0.0 kiya taaki 'int is not a subtype of double' crash na ho
+    final double paidTotal =
+        (base?.totalPrice ?? 0.0) + (overflow?.totalPrice ?? 0.0);
+    final double mrp = display.originalPrice;
+    final bool hasOffer = (base?.clearanceActive ?? false) || freeQty > 0;
+    final String offerType =
+        base?.clearanceType ?? (freeQty > 0 ? 'FREE_ITEM' : '');
+
+    // 🚀 THE MAGIC: SWIPE TO DELETE WRAPPER
+    return Dismissible(
+        key: ValueKey(group.baseKey),
+        confirmDismiss: (direction) async {
+          if (cart.isCorrectionMode) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text("Locked during correction"),
+                backgroundColor: Colors.red));
+            return false;
+          }
+          return true;
+        },
+        direction: cart.isCorrectionMode
+            ? DismissDirection.none
+            : DismissDirection.endToStart,
+        background: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          decoration: BoxDecoration(
+              color: const Color(0xFFE53E3E).withOpacity(0.1),
+              borderRadius: BorderRadius.circular(16)),
+          child: const Icon(Icons.delete_outline_rounded,
+              color: Color(0xFFE53E3E), size: 28),
+        ),
+        onDismissed: (direction) {
+          final name = display.name;
+          cart.deleteItem(group.baseKey);
+          ScaffoldMessenger.of(context).clearSnackBars();
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text("$name removed"),
+            backgroundColor: const Color(0xFF111111),
+            behavior: SnackBarBehavior.floating,
+            action: SnackBarAction(
+              label: 'Undo',
+              textColor: Colors.yellow,
+              onPressed: () async {
+                try {
+                  await cart.add(
+                      barcode: display.barcode,
+                      name: display.name,
+                      price: display.originalPrice,
+                      gst: display.gst,
+                      weight: display.weight);
+                  for (int i = 1; i < totalQty; i++)
+                    await cart.increment(display.barcode);
+                } catch (_) {}
+              },
+            ),
+          ));
+        },
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: hasOffer
+                ? Border.all(color: const Color(0xFF16A34A).withOpacity(0.25))
+                : Border.all(color: const Color(0xFFE5E7EB)),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withOpacity(0.03),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2))
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: hasOffer
+                          ? const Color(0xFF16A34A).withOpacity(0.08)
+                          : const Color(0xFFE53E3E).withOpacity(0.07),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.shopping_bag_outlined,
+                        color: hasOffer
+                            ? const Color(0xFF16A34A)
+                            : const Color(0xFFE53E3E),
+                        size: 18),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(display.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 13,
+                                color: Color(0xFF111111))),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            if (hasOffer &&
+                                base != null &&
+                                base.clearanceType != 'BOGO' &&
+                                base.clearanceType != 'BUY_X_GET_Y' &&
+                                base.clearanceType != 'FREE_ITEM')
+                              Text("₹${mrp.toStringAsFixed(0)}",
+                                  style: const TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey,
+                                      decoration: TextDecoration.lineThrough)),
+                            if (hasOffer &&
+                                base != null &&
+                                base.clearanceType != 'BOGO' &&
+                                base.clearanceType != 'BUY_X_GET_Y' &&
+                                base.clearanceType != 'FREE_ITEM')
+                              const SizedBox(width: 4),
+                            Text(
+                              hasOffer &&
+                                      base != null &&
+                                      base.clearanceType != 'BOGO' &&
+                                      base.clearanceType != 'BUY_X_GET_Y'
+                                  ? "₹${base.finalUnitPrice.toStringAsFixed(0)}/item"
+                                  : "₹${mrp.toStringAsFixed(0)}/item",
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: hasOffer
+                                      ? const Color(0xFF16A34A)
+                                      : const Color(0xFF6B7280),
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  Text("₹${paidTotal.toStringAsFixed(0)}",
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF111111))),
+                ],
+              ),
+
+              // FREE ITEM / BOGO TAG
+              if (freeQty > 0) ...[
+                const SizedBox(height: 8),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                          color: const Color(0xFF16A34A).withOpacity(0.2))),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.card_giftcard_rounded,
+                          color: Color(0xFF16A34A), size: 12),
+                      const SizedBox(width: 4),
+                      Expanded(
+                          child: Text(
+                              _offerLabel(offerType, base?.buyQty ?? 1,
+                                  base?.freeQty ?? freeQty),
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Color(0xFF16A34A),
+                                  fontWeight: FontWeight.w600))),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                            color: const Color(0xFF16A34A),
+                            borderRadius: BorderRadius.circular(100)),
+                        child: Text("+$freeQty FREE",
+                            style: const TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white)),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                      freeQty > 0
+                          ? "$paidQty paid · $freeQty free"
+                          : "$totalQty items",
+                      style: const TextStyle(
+                          fontSize: 11, color: Color(0xFF6B7280))),
+                  Row(
+                    children: [
+                      _miniStepBtn(Icons.remove, () {
+                        if (cart.isCorrectionMode) return;
+                        try {
+                          cart.decrement(group.baseKey);
+                        } catch (_) {}
+                      }, enabled: !cart.isCorrectionMode && totalQty > 1),
+                      SizedBox(
+                          width: 32,
+                          child: Text("$totalQty",
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 14))),
+                      _miniStepBtn(Icons.add, () async {
+                        if (cart.isCorrectionMode) return;
+                        try {
+                          await cart.increment(group.baseKey);
+                        } catch (_) {}
+                      }, enabled: !cart.isCorrectionMode, isAdd: true),
+                    ],
+                  )
+                ],
+              )
+            ],
+          ),
+        ));
+  }
+
+  String _offerLabel(String type, int buyQty, int freeQty) {
+    if (type == 'BOGO') return "Buy 1 Get 1 Free";
+    if (type == 'BUY_X_GET_Y') return "Buy $buyQty Get $freeQty Free";
+    if (type == 'BUY_X_GET_Y_CROSS') return "Cross-Product: $freeQty free";
+    return "Free item applied";
+  }
+
+  // 🚀 HELPER WIDGETS
+  Widget _miniStepBtn(IconData icon, VoidCallback onTap,
+      {bool enabled = true, bool isAdd = false}) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: enabled
+              ? (isAdd ? const Color(0xFFFFEBEB) : const Color(0xFFF6F6F4))
+              : const Color(0xFFF6F6F4),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+              color: enabled
+                  ? (isAdd
+                      ? const Color(0xFFE53E3E).withOpacity(0.3)
+                      : const Color(0xFFE5E7EB))
+                  : const Color(0xFFE5E7EB)),
+        ),
+        child: Icon(icon,
+            size: 14,
+            color: enabled
+                ? (isAdd ? const Color(0xFFE53E3E) : const Color(0xFF111111))
+                : const Color(0xFF9CA3AF)),
       ),
     );
   }
@@ -543,16 +829,58 @@ class _ScanProductScreenState extends State<ScanProductScreen>
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
             color: Colors.black45,
             shape: BoxShape.circle,
             border: Border.all(color: Colors.white24)),
-        child: Icon(icon, color: color, size: 24),
+        child: Icon(icon, color: color, size: 20),
       ),
     );
   }
 
+  // 🚀 HELPER FOR PREMIUM SCANNER CORNERS
+  Widget _buildScannerCorner(
+      {bool isTopLeft = false,
+      bool isTopRight = false,
+      bool isBottomLeft = false,
+      bool isBottomRight = false}) {
+    return Container(
+      width: 35,
+      height: 35,
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(
+              color:
+                  (isTopLeft || isTopRight) ? Colors.white : Colors.transparent,
+              width: 4),
+          bottom: BorderSide(
+              color: (isBottomLeft || isBottomRight)
+                  ? Colors.white
+                  : Colors.transparent,
+              width: 4),
+          left: BorderSide(
+              color: (isTopLeft || isBottomLeft)
+                  ? Colors.white
+                  : Colors.transparent,
+              width: 4),
+          right: BorderSide(
+              color: (isTopRight || isBottomRight)
+                  ? Colors.white
+                  : Colors.transparent,
+              width: 4),
+        ),
+        borderRadius: BorderRadius.only(
+          topLeft: Radius.circular(isTopLeft ? 24 : 0),
+          topRight: Radius.circular(isTopRight ? 24 : 0),
+          bottomLeft: Radius.circular(isBottomLeft ? 24 : 0),
+          bottomRight: Radius.circular(isBottomRight ? 24 : 0),
+        ),
+      ),
+    );
+  }
+
+  // 🚀 KEEP YOUR DIALOG FUNCTIONS UNTOUCHED
   void _showProductFoundDialog(Map<String, dynamic> data, double price) {
     // 🚀 ENGINE: EXTRACT DYNAMIC OFFERS DIRECTLY FROM RAW DB DATA
     bool hasOffer = data['clearanceActive'] == true;

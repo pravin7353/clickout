@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class TrustScoreScreen extends StatelessWidget {
   const TrustScoreScreen({super.key});
@@ -9,6 +11,8 @@ class TrustScoreScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+
     return Scaffold(
       backgroundColor: const Color(0xFFF4F6F8),
       appBar: AppBar(
@@ -22,51 +26,123 @@ class TrustScoreScreen extends StatelessWidget {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            // 🌟 VIP HEADER
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [cherryRedDark, cherryRedLight],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-                borderRadius: const BorderRadius.only(
-                  bottomLeft: Radius.circular(30),
-                  bottomRight: Radius.circular(30),
-                ),
-              ),
-              child: Column(
-                children: [
-                  const Icon(Icons.shield, size: 80, color: Colors.amber),
-                  const SizedBox(height: 15),
-                  const Text(
-                    "The ClickOut Trust System",
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'DejaVuSansMono'),
+            // 🚀 LIVE VIP HEADER WITH PROGRESS BAR
+            StreamBuilder<DocumentSnapshot>(
+              stream: uid != null
+                  ? FirebaseFirestore.instance
+                      .collection('users')
+                      .doc(uid)
+                      .snapshots()
+                  : const Stream.empty(),
+              builder: (context, snapshot) {
+                double score = 80.0;
+                String tierName = "Standard Citizen";
+                Color tierColor = Colors.blueAccent;
+
+                if (snapshot.hasData && snapshot.data!.exists) {
+                  final data = snapshot.data!.data() as Map<String, dynamic>;
+                  score = (data['trustScore'] as num?)?.toDouble() ?? 80.0;
+                }
+
+                if (score >= 90) {
+                  tierName = "VIP - Green Channel";
+                  tierColor = Colors.greenAccent;
+                } else if (score >= 60) {
+                  tierName = "Standard Citizen";
+                  tierColor = Colors.white;
+                } else if (score >= 30) {
+                  tierName = "Watchlist (Strict Check)";
+                  tierColor = Colors.orangeAccent;
+                } else {
+                  tierName = "Blacklisted";
+                  tierColor = Colors.black87;
+                }
+
+                return Container(
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 30, horizontal: 20),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [cherryRedDark, cherryRedLight],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
+                    borderRadius: const BorderRadius.only(
+                      bottomLeft: Radius.circular(30),
+                      bottomRight: Radius.circular(30),
+                    ),
                   ),
-                  const SizedBox(height: 10),
-                  Text(
-                    "We start every citizen with a tremendous score of 80/100. Keep it high for VIP benefits. Play games, and your score will drop.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        color: Colors.white.withOpacity(0.9),
-                        fontSize: 14,
-                        height: 1.5),
+                  child: Column(
+                    children: [
+                      Icon(score >= 90 ? Icons.workspace_premium : Icons.shield,
+                          size: 70, color: tierColor),
+                      const SizedBox(height: 10),
+                      Text(
+                        "Your Current Score",
+                        style: TextStyle(
+                            color: Colors.white.withOpacity(0.8), fontSize: 14),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        "${score.toStringAsFixed(0)} / 100",
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 36,
+                            fontWeight: FontWeight.bold,
+                            fontFamily: 'DejaVuSansMono'),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        tierName,
+                        style: TextStyle(
+                            color: tierColor,
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1),
+                      ),
+                      const SizedBox(height: 25),
+                      // 🚀 PROGRESS BAR
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text("0",
+                                  style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 12)),
+                              Text("100",
+                                  style: TextStyle(
+                                      color: Colors.white.withOpacity(0.7),
+                                      fontSize: 12)),
+                            ],
+                          ),
+                          const SizedBox(height: 5),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: LinearProgressIndicator(
+                              value: score / 100,
+                              minHeight: 8,
+                              backgroundColor: Colors.black.withOpacity(0.2),
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(tierColor),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                );
+              },
             ),
 
             Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
                 children: [
-                  // 🏆 TIER SYSTEM CARD
+                  // 🥇 TIER SYSTEM CARD
                   _buildSectionCard(
                     title: "Status Tiers & Benefits",
                     icon: Icons.workspace_premium,

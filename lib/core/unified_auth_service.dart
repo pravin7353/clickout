@@ -8,10 +8,14 @@ class UnifiedAuthService {
   static final FirebaseAuth _auth = FirebaseAuth.instance;
   static final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // 🧠 HELPER: Create Session ID (Ye ab Auto-login mein bhi chalega)
+  // 🧠 HELPER: Create Session ID & Handle Account Recovery
   static Future<void> _setupUserSession(UserCredential userCred) async {
-    String sessionId = DateTime.now().millisecondsSinceEpoch.toString();
     SharedPreferences prefs = await SharedPreferences.getInstance();
+
+    // 🚀 FIX: Naya session banne se pehle purana clear karo taaki conflict na ho
+    await prefs.remove('localSessionId');
+
+    String sessionId = DateTime.now().millisecondsSinceEpoch.toString();
     await prefs.setString('localSessionId', sessionId);
 
     String? fcmToken;
@@ -21,13 +25,36 @@ class UnifiedAuthService {
       debugPrint("FCM error: $e");
     }
 
-    await _db.collection('users').doc(userCred.user!.uid).set({
+    DocumentSnapshot userDoc =
+        await _db.collection('users').doc(userCred.user!.uid).get();
+
+    Map<String, dynamic> updateData = {
       'phone': userCred.user!.phoneNumber,
       'activeSessionId': sessionId,
       'lastLoginAt': FieldValue.serverTimestamp(),
+      'lastVisit': FieldValue.serverTimestamp(),
       'lastDeviceId': 'MobileApp',
       'fcmTokens': fcmToken != null ? FieldValue.arrayUnion([fcmToken]) : [],
-    }, SetOptions(merge: true));
+    };
+
+    if (userDoc.exists) {
+      var data = userDoc.data() as Map<String, dynamic>;
+      if (data['isDeleted'] == true) {
+        updateData['isDeleted'] = false;
+        updateData['name'] = 'Welcome Back';
+        updateData['trustScore'] = 100;
+        updateData['deletedAt'] = FieldValue.delete();
+        updateData['email'] = FieldValue.delete();
+      }
+    }
+
+    await _db
+        .collection('users')
+        .doc(userCred.user!.uid)
+        .set(updateData, SetOptions(merge: true));
+
+    // 🚀 FIX: DB update hone ke baad listener ko read karne ke liye 1 sec ka buffer
+    await Future.delayed(const Duration(seconds: 1));
   }
 
   // ==========================================================

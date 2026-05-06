@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart'; // 🚀 Added for Firebase Session
+import '../utils/user_session.dart'; // 🚀 Added to restore Store ID
 import 'home_screen.dart'; // update this based on your auth flow
 
 class SplashScreen extends StatefulWidget {
@@ -79,6 +81,16 @@ class _SplashScreenState extends State<SplashScreen>
 
     // Hold for a moment so user registers the premium feel
     await Future.delayed(const Duration(milliseconds: 600));
+
+    // 🚀 THE FIX: Force App to wait until Firebase fully restores the saved Login Session!
+    try {
+      // 1. Wait for Firebase to verify token from memory
+      await FirebaseAuth.instance.authStateChanges().first;
+      // 2. Restore Old Store ID / Tenant ID so cart works instantly
+      await UserSession.restoreSession();
+    } catch (e) {
+      debugPrint("Session restore warning: $e");
+    }
 
     // Navigate to next screen
     if (mounted) {

@@ -39,6 +39,23 @@ class InvoiceService {
       Map<String, dynamic> data, String id) async {
     final pdf = pw.Document();
 
+    // 🚀 1. FETCH DYNAMIC T&C FROM ADMIN PANEL
+    String termsAndConditions =
+        "1. Exchange within 7 days with original receipt.\n2. Goods once sold will not be refunded.";
+    try {
+      String tId = data['tenantId']?.toString() ?? '';
+      if (tId.isNotEmpty) {
+        var tDoc = await FirebaseFirestore.instance
+            .collection('tenants')
+            .doc(tId)
+            .get();
+        if (tDoc.exists && tDoc.data()!.containsKey('invoiceConfig')) {
+          termsAndConditions =
+              tDoc.data()!['invoiceConfig']['terms'] ?? termsAndConditions;
+        }
+      }
+    } catch (_) {} // Fallback to default if offline/error
+
     DateTime date = DateTime.now();
     if (data['timestamp'] != null) {
       if (data['timestamp'] is Timestamp) {
@@ -88,6 +105,16 @@ class InvoiceService {
       totalGSTAmount += gstAmountForLine;
     }
 
+    // 🧠 2. SMART TITLE & DYNAMIC DATA LOGIC
+    String documentTitle =
+        totalGSTAmount > 0.0 ? "TAX INVOICE" : "BILL OF SUPPLY";
+    String storeName =
+        data['branchCode']?.toString() ?? 'CLICKOUT'; // Dynamic Store
+    String cashierName = data['scannedByName']?.toString() ?? '';
+    String guardName =
+        data['verifiedByGuardId']?.toString() ?? 'Pending Approval';
+    String paymentMode = data['paymentMode']?.toString() ?? 'Online';
+
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
@@ -99,12 +126,12 @@ class InvoiceService {
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 children: [
-                  pw.Text("CLICKOUT",
+                  pw.Text(storeName, // 🚀 Dynamic Store Name
                       style: pw.TextStyle(
                           fontSize: 24,
                           fontWeight: pw.FontWeight.bold,
                           color: PdfColors.red)),
-                  pw.Text("TAX INVOICE",
+                  pw.Text(documentTitle, // 🚀 Math Decided Title
                       style: pw.TextStyle(
                           fontSize: 18, fontWeight: pw.FontWeight.bold)),
                 ],
@@ -120,7 +147,12 @@ class InvoiceService {
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
                         pw.Text("Billed To: ${data['userName'] ?? 'Customer'}"),
-                        pw.Text("Mode: ${data['paymentMode'] ?? 'Online'}"),
+                        pw.Text("Mode: $paymentMode"),
+                        if (paymentMode == 'CASH' && cashierName.isNotEmpty)
+                          pw.Text(
+                              "Cashier: $cashierName"), // 🚀 Cashier Name added
+                        pw.Text(
+                            "Exit Approved By: $guardName"), // 🚀 Guard Name added
                       ]),
                   pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.end,
@@ -162,6 +194,13 @@ class InvoiceService {
                         double.tryParse(e['quantity']?.toString() ?? '0') ??
                         0.0;
 
+                    // 🚀 3. OFFER LOGIC: Add [FREE] tag if applicable
+                    String itemName = e['name']?.toString() ?? 'Unknown Item';
+                    String clearanceType = e['clearanceType']?.toString() ?? '';
+                    if (mrp == 0 || clearanceType == 'FREE_ITEM') {
+                      itemName = "[FREE] $itemName";
+                    }
+
                     double gstRate = e['gst'] != null
                         ? double.tryParse(e['gst'].toString()) ?? 18.0
                         : 18.0;
@@ -181,7 +220,7 @@ class InvoiceService {
                         : "${itemWgt.toStringAsFixed(0)}g";
 
                     return [
-                      e['name']?.toString() ?? 'Unknown Item',
+                      itemName,
                       qty.toStringAsFixed(0),
                       itemWgtStr,
                       mrp.toStringAsFixed(2),
@@ -218,6 +257,21 @@ class InvoiceService {
                                 fontSize: 10, color: PdfColors.grey)),
                       ]),
                 ],
+              ),
+              pw.SizedBox(height: 30),
+
+              // 📜 4. DYNAMIC TERMS & CONDITIONS
+              pw.Divider(thickness: 1, color: PdfColors.grey400),
+              pw.Text(
+                "Terms & Conditions:",
+                style:
+                    pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Text(
+                termsAndConditions,
+                style:
+                    const pw.TextStyle(fontSize: 8, color: PdfColors.grey800),
               ),
             ],
           );

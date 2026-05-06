@@ -44,6 +44,8 @@ class OfferEngineService {
           clearanceType: '',
           clearanceValue: 0,
           freeQtyGiven: 0,
+          offerHint: '', // 🚀 FIX: Reset hint on recalculate
+          flashExpiry: 0,
         );
       }
     });
@@ -124,6 +126,8 @@ class OfferEngineService {
       required int fQty,
       required String targetId,
       bool overflow = false,
+      String hint = '',
+      int expiry = 0,
     }) {
       final double fp = unitPrice < 0 ? 0 : unitPrice;
       totalDiscount += (item.originalPrice - fp) * item.quantity;
@@ -137,6 +141,8 @@ class OfferEngineService {
         freeProductId: targetId,
         isOverflow: overflow,
         freeQtyGiven: 0,
+        offerHint: hint,
+        flashExpiry: expiry,
       );
     }
 
@@ -149,28 +155,73 @@ class OfferEngineService {
       final int stock = liveStockLogs[bc] ?? qty;
       final double mrp = original.originalPrice;
 
+      // 🚀 FIX: Match Document ID vs Cart Barcode perfectly using .endsWith()
       final trigger = offers.firstWhere(
-        (o) =>
-            (cleanBarcode(o['barcode']) == bc ||
-                cleanBarcode(o['productId']) == bc) &&
-            o['clearanceActive'] == true,
+        (o) {
+          String op = cleanBarcode(o['productId'] ?? '');
+          String ob = cleanBarcode(o['barcode'] ?? '');
+          return (ob == bc || op.endsWith(bc) || op == bc) &&
+              o['clearanceActive'] == true;
+        },
         orElse: () => {},
       );
+
       final crossTarget = offers.firstWhere(
-        (o) =>
-            cleanBarcode(o['targetProductId']) == bc &&
-            o['clearanceActive'] == true,
+        (o) {
+          String tp = cleanBarcode(o['targetProductId'] ?? '');
+          // 🚀 FIX: Two-way substring matching to ignore prefixes completely
+          return tp.isNotEmpty &&
+              (tp == bc || tp.endsWith(bc) || bc.endsWith(tp)) &&
+              o['clearanceActive'] == true;
+        },
         orElse: () => {},
       );
+
+      String currentHint = '';
+      int currentExpiry = 0;
 
       if (trigger.isNotEmpty) {
         final String ot =
             (trigger['clearanceType'] ?? '').toString().toUpperCase();
 
+        // 🚀 FIX: Dynamic Hints for partial offers
+        if (ot == 'BOGO' || ot == 'BUY_X_GET_Y') {
+          final int bQ = (trigger['buyQty'] as int?) ?? 1;
+          final int fQ = (trigger['freeQty'] as int?) ?? 1;
+          if (qty % bQ != 0 || qty < bQ) {
+            currentHint = "Add ${bQ - (qty % bQ)} more to get $fQ FREE! 🎁";
+          }
+        } else if (ot == 'TIERED_QTY') {
+          final int minQ = (trigger['minQty'] as int?) ?? 1;
+          if (qty < minQ) {
+            currentHint =
+                "Add ${minQ - qty} more to get ${safeParse(trigger['discount'])}% OFF! 📉";
+          }
+        } else if (ot == 'BUNDLE_PRICE') {
+          final int bQ = (trigger['bundleQty'] as int?) ?? 1;
+          if (qty % bQ != 0 || qty < bQ) {
+            currentHint =
+                "Add ${bQ - (qty % bQ)} more to get $bQ for ₹${trigger['bundlePrice']}! 📦";
+          }
+        } else if (ot == 'FLASH_SALE') {
+          final dynamic exp = trigger['expiresAt'];
+          if (exp is Timestamp && exp.toDate().isAfter(DateTime.now())) {
+            currentExpiry = exp.toDate().millisecondsSinceEpoch;
+          }
+        }
+
         // ── NEW: CROSS OFFER TRIGGER IDENTIFICATION ──────────────
-        // Trigger item ko full MRP pe rakhenge, par active: true karenge
-        // taaki UI me customer ko offer badge (e.g. "Buy 1 get AirPods free") dikhe.
         if (ot == 'BUY_X_GET_Y_CROSS' || ot == 'CROSS_PRODUCT') {
+          // 🚀 FIX: Intelligent Hint - check if Target is already in cart
+          String tp = cleanBarcode(trigger['targetProductId'] ?? '');
+          bool targetInCart =
+              safe.keys.any((k) => tp.endsWith(cleanBarcode(k)));
+          String targetName = trigger['targetProductName'] ?? 'Combo Item';
+
+          String comboHint = targetInCart
+              ? '' // Hide hint if target is already successfully inside cart
+              : "Combo Starter: Add $targetName to unlock offer! 🎁";
+
           writeLine(
               key: bc,
               item: original,
@@ -179,7 +230,8 @@ class OfferEngineService {
               unitPrice: mrp,
               bQty: (trigger['buyQty'] as int?) ?? 1,
               fQty: (trigger['freeQty'] as int?) ?? 0,
-              targetId: cleanBarcode(trigger['targetProductId']));
+              targetId: cleanBarcode(trigger['targetProductId']),
+              hint: comboHint);
           return;
         }
 
@@ -210,12 +262,13 @@ class OfferEngineService {
           writeLine(
               key: bc,
               item: original.copyWith(quantity: qty),
-              active: actualFreeEarned > 0, // Only active if they got something
+              active: actualFreeEarned > 0,
               type: ot,
               unitPrice: mrp,
               bQty: bQty,
               fQty: fQty,
-              targetId: '');
+              targetId: '',
+              hint: currentHint); // 🚀 FIX: Applied hint!
 
           // Automatically append the free items
           if (actualFreeEarned > 0) {
@@ -245,7 +298,8 @@ class OfferEngineService {
               unitPrice: met ? mrp * (1 - disc / 100) : mrp,
               bQty: minQ,
               fQty: 0,
-              targetId: '');
+              targetId: '',
+              hint: currentHint);
           return;
         }
 
@@ -262,7 +316,8 @@ class OfferEngineService {
               unitPrice: expired ? mrp : mrp * (1 - disc / 100),
               bQty: 1,
               fQty: 0,
-              targetId: '');
+              targetId: '',
+              expiry: currentExpiry); // 🚀 FIX: Passed Timer Expiry
           return;
         }
 
@@ -280,7 +335,8 @@ class OfferEngineService {
               unitPrice: qty > 0 ? total / qty : mrp,
               bQty: bunQty,
               fQty: 0,
-              targetId: '');
+              targetId: '',
+              hint: currentHint);
           return;
         }
 
@@ -314,91 +370,113 @@ class OfferEngineService {
       if (crossTarget.isNotEmpty) {
         final String ct =
             (crossTarget['clearanceType'] ?? '').toString().toUpperCase();
-        final String trigId = cleanBarcode(
-            crossTarget['barcode'] ?? crossTarget['productId'] ?? '');
-        final trigEntry = safe.entries
-            .where((e) => cleanBarcode(e.key) == trigId)
-            .firstOrNull;
 
-        if (trigEntry != null) {
-          final int trigQty = trigEntry.value.quantity;
+        // 🚀 FIX: Ultra-safe matching for Trigger ID
+        final String trigId = cleanBarcode(crossTarget['productId'] ?? '');
+        final String trigBc = cleanBarcode(crossTarget['barcode'] ?? '');
 
-          // ── BUY X GET Y (DIFFERENT ITEM) ─────────────────────────────────
-          if (ct == 'BUY_X_GET_Y_CROSS') {
-            final int cbQty = (crossTarget['buyQty'] as int?) ?? 1;
-            final int cfQty = (crossTarget['freeQty'] as int?) ?? 1;
+        final trigEntry = safe.entries.where((e) {
+          String k = cleanBarcode(e.key);
+          if (k.isEmpty) return false;
+          return k == trigBc ||
+              k == trigId ||
+              (trigId.isNotEmpty && k.endsWith(trigId)) ||
+              (trigBc.isNotEmpty && k.endsWith(trigBc));
+        }).firstOrNull;
 
-            // Calculate free items earned from trigger quantity
-            final int earnedFree = cbQty > 0 ? (trigQty ~/ cbQty) * cfQty : 0;
+        if (trigEntry == null) {
+          // 🚀 FIX: Target in cart, but Trigger is missing! (Idle Target State)
+          final String trigName = crossTarget['productName'] ?? 'Combo Item';
+          writeLine(
+              key: bc,
+              item: original,
+              active: false, // Offer inactive yet
+              type: '',
+              unitPrice: mrp,
+              bQty: 1,
+              fQty: 0,
+              targetId: '',
+              hint: "Unlock FREE with $trigName! 🔗"); // Smart upsell badge
+          return;
+        }
 
-            // Limit by available physical stock
-            final int maxFreeAllowed = earnedFree > stock ? stock : earnedFree;
+        final int trigQty = trigEntry.value.quantity;
 
-            // We can only give free what they actually added to the cart
-            final int freeToGive = maxFreeAllowed > qty ? qty : maxFreeAllowed;
-            final int paidCount = qty - freeToGive;
+        // ── BUY X GET Y (DIFFERENT ITEM) ─────────────────────────────────
+        if (ct == 'BUY_X_GET_Y_CROSS') {
+          final int cbQty = (crossTarget['buyQty'] as int?) ?? 1;
+          final int cfQty = (crossTarget['freeQty'] as int?) ?? 1;
 
-            if (freeToGive > 0) {
-              freeCount += freeToGive;
-              writeLine(
-                  key: '${bc}_FREE',
-                  item: original.copyWith(quantity: freeToGive),
-                  active: true,
-                  type: 'FREE_ITEM',
-                  unitPrice: 0.0,
-                  bQty: cbQty,
-                  fQty: cfQty,
-                  targetId: trigId);
-            }
-            if (paidCount > 0) {
-              writeLine(
-                  key: freeToGive > 0 ? '${bc}_OVERFLOW' : bc,
-                  item: original.copyWith(quantity: paidCount),
-                  active: false,
-                  type: '',
-                  unitPrice: mrp,
-                  bQty: 1,
-                  fQty: 0,
-                  targetId: '',
-                  overflow: freeToGive > 0);
-            }
-            return;
+          // Calculate free items earned from trigger quantity
+          final int earnedFree = cbQty > 0 ? (trigQty ~/ cbQty) * cfQty : 0;
+
+          // Limit by available physical stock
+          final int maxFreeAllowed = earnedFree > stock ? stock : earnedFree;
+
+          // We can only give free what they actually added to the cart
+          final int freeToGive = maxFreeAllowed > qty ? qty : maxFreeAllowed;
+          final int paidCount = qty - freeToGive;
+
+          if (freeToGive > 0) {
+            freeCount += freeToGive;
+            writeLine(
+                key: '${bc}_FREE',
+                item: original.copyWith(quantity: freeToGive),
+                active: true,
+                type: 'FREE_ITEM',
+                unitPrice: 0.0,
+                bQty: cbQty,
+                fQty: cfQty,
+                targetId: trigId);
           }
-
-          // ── CROSS PRODUCT (% OFF DIFFERENT ITEM) ─────────────────────────
-          if (ct == 'CROSS_PRODUCT') {
-            final double disc = safeParse(crossTarget['discount']);
-
-            // 🚀 Enterprise Rule: 1 Trigger Item unlocks discount for 1 Target Item
-            // (Prevents a user from adding 1 iPhone and getting discount on 50 AirPods)
-            int discountedQty = qty > trigQty ? trigQty : qty;
-            int normalQty = qty - discountedQty;
-
-            if (discountedQty > 0) {
-              writeLine(
-                  key: bc,
-                  item: original.copyWith(quantity: discountedQty),
-                  active: true,
-                  type: ct,
-                  unitPrice: mrp * (1 - disc / 100),
-                  bQty: 1,
-                  fQty: 0,
-                  targetId: trigId);
-            }
-            if (normalQty > 0) {
-              writeLine(
-                  key: discountedQty > 0 ? '${bc}_OVERFLOW' : bc,
-                  item: original.copyWith(quantity: normalQty),
-                  active: false,
-                  type: '',
-                  unitPrice: mrp,
-                  bQty: 1,
-                  fQty: 0,
-                  targetId: '',
-                  overflow: discountedQty > 0);
-            }
-            return;
+          if (paidCount > 0) {
+            writeLine(
+                key: freeToGive > 0 ? '${bc}_OVERFLOW' : bc,
+                item: original.copyWith(quantity: paidCount),
+                active: false,
+                type: '',
+                unitPrice: mrp,
+                bQty: 1,
+                fQty: 0,
+                targetId: '',
+                overflow: freeToGive > 0);
           }
+          return;
+        }
+
+        // ── CROSS PRODUCT (% OFF DIFFERENT ITEM) ─────────────────────────
+        if (ct == 'CROSS_PRODUCT') {
+          final double disc = safeParse(crossTarget['discount']);
+
+          // 🚀 Enterprise Rule: 1 Trigger Item unlocks discount for 1 Target Item
+          // (Prevents a user from adding 1 iPhone and getting discount on 50 AirPods)
+          int discountedQty = qty > trigQty ? trigQty : qty;
+          int normalQty = qty - discountedQty;
+
+          if (discountedQty > 0) {
+            writeLine(
+                key: bc,
+                item: original.copyWith(quantity: discountedQty),
+                active: true,
+                type: ct,
+                unitPrice: mrp * (1 - disc / 100),
+                bQty: 1,
+                fQty: 0,
+                targetId: trigId);
+          }
+          if (normalQty > 0) {
+            writeLine(
+                key: discountedQty > 0 ? '${bc}_OVERFLOW' : bc,
+                item: original.copyWith(quantity: normalQty),
+                active: false,
+                type: '',
+                unitPrice: mrp,
+                bQty: 1,
+                fQty: 0,
+                targetId: '',
+                overflow: discountedQty > 0);
+          }
+          return;
         }
       }
 

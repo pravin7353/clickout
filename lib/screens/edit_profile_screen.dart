@@ -280,7 +280,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                   onPressed: _isLoading ? null : _saveProfile,
                   child: _isLoading
-                      ? const CircularProgressIndicator(color: Colors.white)
+                      ? const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                                width: 22,
+                                height: 22,
+                                child: CircularProgressIndicator(
+                                    color: Colors.white, strokeWidth: 2.5)),
+                            SizedBox(width: 10),
+                            Text("Saving...",
+                                style: TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white)),
+                          ],
+                        )
                       : const Text("Submit",
                           style: TextStyle(
                               fontSize: 18,
@@ -314,7 +329,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         borderRadius: BorderRadius.circular(8)),
                   ),
                   icon: const Icon(Icons.delete_forever),
-                  label: const Text("Permanently Delete Account"),
+                  label: const Text("Delete Account"),
                   onPressed: _isLoading ? null : _showDeleteConfirmation,
                 ),
               ),
@@ -342,8 +357,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       {bool isReadOnly = false, int maxLines = 1}) {
     return Container(
       decoration: BoxDecoration(
-        color: inputFillColor,
+        color: isReadOnly
+            ? Colors.grey.shade200
+            : inputFillColor, // 🚀 Grey out disabled fields
         borderRadius: BorderRadius.circular(12),
+        border: isReadOnly ? Border.all(color: Colors.grey.shade300) : null,
       ),
       child: TextFormField(
         controller: controller,

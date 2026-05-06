@@ -1,3 +1,4 @@
+import '../widgets/shared_cart_item_card.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -183,7 +184,7 @@ class _CartScreenState extends State<CartScreen> {
   // ─── MAIN BODY ────────────────────────────────────────────────────────────
   Widget _buildBody(CartService cart) {
     // Group items by base barcode for consolidated display
-    final List<_CartGroup> groups = _buildGroups(cart.items);
+    final List<CartGroup> groups = buildCartGroups(cart.items);
 
     return Column(
       children: [
@@ -203,7 +204,7 @@ class _CartScreenState extends State<CartScreen> {
                   delegate: SliverChildBuilderDelegate(
                     (ctx, i) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: _buildGroupCard(groups[i], cart),
+                      child: SharedCartItemCard(group: groups[i], cart: cart),
                     ),
                     childCount: groups.length,
                   ),
@@ -257,7 +258,10 @@ class _CartScreenState extends State<CartScreen> {
                       ],
                     ),
                   ),
-                  if (cart != null && cart.items.isNotEmpty)
+                  // 🔒 SECURITY LOCK: Clear button gayab in Fix & Exit
+                  if (cart != null &&
+                      cart.items.isNotEmpty &&
+                      !cart.isCorrectionMode)
                     TextButton.icon(
                       onPressed: () => _showClearDialog(cart),
                       icon: const Icon(Icons.delete_outline_rounded,
@@ -337,28 +341,8 @@ class _CartScreenState extends State<CartScreen> {
     );
   }
 
-  // ─── GROUP BUILDER ────────────────────────────────────────────────────────
-  List<_CartGroup> _buildGroups(Map<String, CartItem> items) {
-    final Map<String, _CartGroup> groups = {};
-    items.forEach((key, item) {
-      final String base =
-          key.replaceAll('_FREE', '').replaceAll('_OVERFLOW', '');
-      if (!groups.containsKey(base)) {
-        groups[base] = _CartGroup(baseKey: base);
-      }
-      if (key.endsWith('_FREE')) {
-        groups[base]!.freeItem = item;
-      } else if (key.endsWith('_OVERFLOW')) {
-        groups[base]!.overflowItem = item;
-      } else {
-        groups[base]!.baseItem = item;
-      }
-    });
-    return groups.values.toList();
-  }
-
   // ─── CARD FOR ONE PRODUCT GROUP ───────────────────────────────────────────
-  Widget _buildGroupCard(_CartGroup group, CartService cart) {
+  Widget _buildGroupCard(CartGroup group, CartService cart) {
     final CartItem? base = group.baseItem;
     final CartItem? free = group.freeItem;
     final CartItem? overflow = group.overflowItem;
@@ -379,7 +363,15 @@ class _CartScreenState extends State<CartScreen> {
         base?.clearanceType ?? (freeQty > 0 ? 'FREE_ITEM' : '');
 
     return Dismissible(
-      key: Key(group.baseKey),
+      key: ValueKey(group.baseKey),
+      // 🔒 GHOST ITEM FIX: Jab tak confirm na ho, UI se item gayab nahi hoga!
+      confirmDismiss: (direction) async {
+        if (cart.isCorrectionMode) {
+          _snack("Item locked during correction.");
+          return false; // False = Item wapas apni jagah aayega
+        }
+        return true;
+      },
       direction: cart.isCorrectionMode
           ? DismissDirection.none
           : DismissDirection.endToStart,
@@ -391,17 +383,23 @@ class _CartScreenState extends State<CartScreen> {
             borderRadius: BorderRadius.circular(16)),
         child: const Icon(Icons.delete_outline_rounded, color: _red, size: 24),
       ),
-      onDismissed: (_) {
+      onDismissed: (direction) {
         final name = display.name;
+        final messenger = ScaffoldMessenger.of(context);
+
         cart.deleteItem(group.baseKey);
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        messenger.clearSnackBars();
+
+        messenger.showSnackBar(SnackBar(
           content: Text("$name removed"),
+          duration: const Duration(seconds: 3),
           behavior: SnackBarBehavior.floating,
           backgroundColor: _text1,
           action: SnackBarAction(
             label: 'Undo',
             textColor: Colors.yellow,
             onPressed: () async {
+              messenger.removeCurrentSnackBar();
               try {
                 await cart.add(
                     barcode: display.barcode,
@@ -416,6 +414,12 @@ class _CartScreenState extends State<CartScreen> {
             },
           ),
         ));
+
+        Future.delayed(const Duration(seconds: 3), () {
+          try {
+            messenger.removeCurrentSnackBar();
+          } catch (_) {}
+        });
       },
       child: Container(
         decoration: BoxDecoration(
@@ -511,6 +515,41 @@ class _CartScreenState extends State<CartScreen> {
                           color: _text1)),
                 ],
               ),
+
+              // 🚀 FIX: Dynamic Partial Offer Hints
+              if (base != null && base.offerHint.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: _amber.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _amber.withOpacity(0.3)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.stars_rounded, color: _amber, size: 14),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          base.offerHint,
+                          style: GoogleFonts.dmSans(
+                              fontSize: 12,
+                              color: _amber,
+                              fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
+              // 🚀 FIX: Live Flash Sale Countdown
+              if (base != null && base.flashExpiry > 0) ...[
+                const SizedBox(height: 10),
+                _buildCountdownTimer(base.flashExpiry),
+              ],
 
               // BOGO / Free item row
               if (freeQty > 0) ...[
@@ -610,6 +649,39 @@ class _CartScreenState extends State<CartScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCountdownTimer(int expiryMs) {
+    return StreamBuilder(
+      stream: Stream.periodic(const Duration(seconds: 1)),
+      builder: (context, snapshot) {
+        final diff = expiryMs - DateTime.now().millisecondsSinceEpoch;
+        if (diff <= 0) return const SizedBox.shrink();
+        int h = (diff ~/ 3600000);
+        int m = ((diff ~/ 60000) % 60);
+        int s = ((diff ~/ 1000) % 60);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: _red.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _red.withOpacity(0.3)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.timer_outlined, color: _red, size: 14),
+              const SizedBox(width: 6),
+              Text(
+                "Ends in ${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}",
+                style: GoogleFonts.dmSans(
+                    fontSize: 12, color: _red, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -842,6 +914,11 @@ class _CartScreenState extends State<CartScreen> {
 
   // ─── DIALOGS & HELPERS ────────────────────────────────────────────────────
   void _showClearDialog(CartService cart) {
+    // 🔒 ULTIMATE UI LOCK: Dialog khulega hi nahi!
+    if (cart.isCorrectionMode) {
+      _snack("Cart locked! You must fix the items.");
+      return;
+    }
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -863,9 +940,10 @@ class _CartScreenState extends State<CartScreen> {
                 elevation: 0,
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(8))),
-            onPressed: () {
-              cart.clear();
-              Navigator.pop(ctx);
+            onPressed: () async {
+              // 🚀 FIX: Wait for DB and Local Storage to fully wipe before closing modal (Kills Ghost items)
+              await cart.clearCart();
+              if (ctx.mounted) Navigator.pop(ctx);
             },
             child: Text("Clear",
                 style: GoogleFonts.dmSans(fontWeight: FontWeight.w600)),
@@ -894,13 +972,4 @@ class _CartScreenState extends State<CartScreen> {
       margin: const EdgeInsets.all(12),
     ));
   }
-}
-
-// ── Data class for grouped display ───────────────────────────────────────────
-class _CartGroup {
-  final String baseKey;
-  CartItem? baseItem;
-  CartItem? freeItem;
-  CartItem? overflowItem;
-  _CartGroup({required this.baseKey});
 }

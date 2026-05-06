@@ -98,17 +98,38 @@ class ProfileScreen extends StatelessWidget {
 
                             return Column(
                               children: [
-                                CircleAvatar(
-                                  radius: 40,
-                                  backgroundColor: Colors.white,
-                                  child: Text(
-                                      name.isNotEmpty
-                                          ? name[0].toUpperCase()
-                                          : "U",
-                                      style: TextStyle(
-                                          fontSize: 30,
-                                          color: cherryRedDark,
-                                          fontWeight: FontWeight.bold)),
+                                Stack(
+                                  alignment: Alignment.bottomRight,
+                                  children: [
+                                    CircleAvatar(
+                                      radius: 40,
+                                      backgroundColor: Colors.white,
+                                      child: Text(
+                                          name.isNotEmpty
+                                              ? name[0].toUpperCase()
+                                              : "U",
+                                          style: TextStyle(
+                                              fontSize: 30,
+                                              color: cherryRedDark,
+                                              fontWeight: FontWeight.bold)),
+                                    ),
+                                    // 🚀 Camera Edit Icon
+                                    Container(
+                                      padding: const EdgeInsets.all(5),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        shape: BoxShape.circle,
+                                        boxShadow: [
+                                          BoxShadow(
+                                              color:
+                                                  Colors.black.withOpacity(0.1),
+                                              blurRadius: 4)
+                                        ],
+                                      ),
+                                      child: Icon(Icons.edit_rounded,
+                                          size: 14, color: cherryRedDark),
+                                    ),
+                                  ],
                                 ),
                                 const SizedBox(height: 10),
                                 Text(name,
@@ -206,7 +227,11 @@ class ProfileScreen extends StatelessWidget {
                       const SizedBox(height: 10),
                       _sectionTitle("General"),
                       _menuItem(
-                          context, Icons.notifications, "Notifications", () {}),
+                          context,
+                          Icons.notifications,
+                          "Notifications",
+                          () => _showNotificationSettings(
+                              context)), // 🚀 Linked new function
                       _menuItem(context, Icons.help, "Help & Support",
                           () => _showSupportOptions(context)),
                       const SizedBox(height: 20),
@@ -384,4 +409,83 @@ class ProfileScreen extends StatelessWidget {
       ),
     );
   }
+}
+
+// 🔔 NOTIFICATION SETTINGS BOTTOM SHEET
+void _showNotificationSettings(BuildContext context) {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+    builder: (context) {
+      return StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('users')
+              .doc(user.uid)
+              .snapshots(),
+          builder: (context, snapshot) {
+            bool isEnabled = true; // Default ON
+
+            if (snapshot.hasData && snapshot.data!.exists) {
+              final data = snapshot.data!.data() as Map<String, dynamic>;
+              // Check database flag, defaults to true if not set
+              isEnabled = data['notificationsEnabled'] ?? true;
+            }
+
+            return Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                      width: 50,
+                      height: 5,
+                      decoration: BoxDecoration(
+                          color: Colors.grey[300],
+                          borderRadius: BorderRadius.circular(10))),
+                  const SizedBox(height: 20),
+                  const Text("Notification Settings",
+                      style:
+                          TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 20),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                            color: Colors.red[50],
+                            borderRadius: BorderRadius.circular(10)),
+                        child: const Icon(Icons.notifications_active_rounded,
+                            color: Color(0xFFC62828))),
+                    title: const Text("Push Notifications",
+                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: const Text(
+                        "Receive order updates, alerts & offers",
+                        style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    trailing: Switch(
+                      value: isEnabled,
+                      activeColor: const Color(0xFFC62828),
+                      activeTrackColor:
+                          const Color(0xFFEF5350).withOpacity(0.4),
+                      onChanged: (val) async {
+                        // 🚀 Instant update to Firestore
+                        await FirebaseFirestore.instance
+                            .collection('users')
+                            .doc(user.uid)
+                            .set({'notificationsEnabled': val},
+                                SetOptions(merge: true));
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          });
+    },
+  );
 }

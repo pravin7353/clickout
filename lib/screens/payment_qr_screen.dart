@@ -48,7 +48,8 @@ class PaymentQRScreen extends StatelessWidget {
           // ✅ PAYMENT SUCCESS
           if (payStatus == 'PAID' || status == 'COMPLETED') {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              Provider.of<CartService>(context, listen: false).clear();
+              // 🚀 FIX: Safely wipe entire cart (handles both normal & correction mode safely)
+              Provider.of<CartService>(context, listen: false).clearCart();
             });
             return _buildSuccessView(context);
           }

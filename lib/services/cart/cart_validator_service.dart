@@ -7,9 +7,8 @@ class CartValidatorService {
 
   Future<Map<String, dynamic>?> _getSafeProduct(String baseBarcode) async {
     try {
-      // 🚀 FIX: Allow hyphens & underscores for Service IDs
-      String cleanTarget =
-          baseBarcode.replaceAll(RegExp(r'[^0-9a-zA-Z\-_]'), '');
+      // 🚀 FIX: Match Admin Panel Exactly. No aggressive regex stripping!
+      String cleanTarget = baseBarcode.trim();
       String docId =
           '${UserSession.tenantId}_${UserSession.storeId}_$cleanTarget';
 
@@ -87,7 +86,8 @@ class CartValidatorService {
         }
 
         // 🚀 SAAS LOGIC: Service items bypass inventory limits
-        bool isService = pData['itemType'] == 'SERVICE';
+        bool isService =
+            pData['itemType']?.toString().toUpperCase() == 'SERVICE';
 
         // 🚀 OPTIMISTIC CHECKOUT: Only check Physical Stock, Ignore Reserved
         int liveStock = pData['physicalStock'] ?? 0;

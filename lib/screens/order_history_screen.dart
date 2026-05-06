@@ -2,18 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'order_detail_screen.dart';
-import 'payment_qr_screen.dart';
 import '../../services/system/auto_heal_service.dart';
-import '../../utils/user_session.dart'; // 🚀 SAAS INJECTION IMPORT
-
-enum SortType {
-  pendingFirst,
-  completedFirst,
-  amountAsc,
-  amountDesc,
-  dateLatest
-}
+import '../utils/user_session.dart';
 
 class OrderHistoryScreen extends StatefulWidget {
   const OrderHistoryScreen({super.key});
@@ -23,334 +15,541 @@ class OrderHistoryScreen extends StatefulWidget {
 }
 
 class _OrderHistoryScreenState extends State<OrderHistoryScreen> {
-  SortType _currentSort = SortType.dateLatest;
+  // 🚀 THE FIX: Dynamic getter instead of static final variable (Real-time check)
+  String? get userId => FirebaseAuth.instance.currentUser?.uid;
+  bool get isGlobal => UserSession.tenantId.isEmpty;
 
-  @override
-  void initState() {
-    super.initState();
-    // Screen khulte hi background me auto-heal run kar do
-    final String? userId = FirebaseAuth.instance.currentUser?.uid;
-    if (userId != null) {
-      AutoHealService().healCorruptedOrders(userId);
-    }
-  }
+  int _currentSortIndex = 0;
+  final List<String> _sortModes = [
+    "⏱️ Date: Newest",
+    "⏱️ Date: Oldest",
+    "💸 Price: Highest",
+    "💸 Price: Lowest"
+  ];
 
-  void _cycleSort() {
-    setState(() {
-      switch (_currentSort) {
-        case SortType.dateLatest:
-          _currentSort = SortType.pendingFirst;
-          break;
-        case SortType.pendingFirst:
-          _currentSort = SortType.completedFirst;
-          break;
-        case SortType.completedFirst:
-          _currentSort = SortType.amountDesc;
-          break;
-        case SortType.amountDesc:
-          _currentSort = SortType.amountAsc;
-          break;
-        case SortType.amountAsc:
-          _currentSort = SortType.dateLatest;
-          break;
-      }
+  void _sortOrders(List<QueryDocumentSnapshot> docs) {
+    String mode = _sortModes[_currentSortIndex];
+    docs.sort((a, b) {
+      Map<String, dynamic> dataA = a.data() as Map<String, dynamic>;
+      Map<String, dynamic> dataB = b.data() as Map<String, dynamic>;
+
+      DateTime dateA =
+          (dataA['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+      DateTime dateB =
+          (dataB['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+      double priceA =
+          double.tryParse(dataA['totalAmount']?.toString() ?? '0') ?? 0.0;
+      double priceB =
+          double.tryParse(dataB['totalAmount']?.toString() ?? '0') ?? 0.0;
+
+      if (mode == "⏱️ Date: Newest") return dateB.compareTo(dateA);
+      if (mode == "⏱️ Date: Oldest") return dateA.compareTo(dateB);
+      if (mode == "💸 Price: Highest") return priceB.compareTo(priceA);
+      if (mode == "💸 Price: Lowest") return priceA.compareTo(priceB);
+      return dateB.compareTo(dateA);
     });
   }
 
   @override
-  Widget build(BuildContext context) {
-    // 🚀 THE FIX: Ye line 'currentUserId' ke laal error ko hamesha ke liye mita degi!
-    final currentUserId = FirebaseAuth.instance.currentUser?.uid ?? '';
+  void initState() {
+    super.initState();
+    if (userId != null) {
+      AutoHealService().healCorruptedOrders(userId!);
+    }
+  }
 
+  Color _getStatusBgColor(String status) {
+    switch (status.toUpperCase()) {
+      case 'COMPLETED':
+      case 'EXITED':
+      case 'APPROVED':
+      case 'CLEAR EXIT':
+        return const Color(0xFFE8F5E9);
+      case 'REJECTED':
+      case 'NEEDS FIX':
+        return const Color(0xFFFFEBEE);
+      case 'FIX & EXIT':
+        return const Color(0xFFF3E5F5);
+      case 'EXPIRED':
+        return const Color(0xFFF3F4F6);
+      default:
+        return const Color(0xFFE0F2FE);
+    }
+  }
+
+  Color _getStatusTextColor(String status) {
+    switch (status.toUpperCase()) {
+      case 'COMPLETED':
+      case 'EXITED':
+      case 'APPROVED':
+      case 'CLEAR EXIT':
+        return const Color(0xFF166534);
+      case 'REJECTED':
+      case 'NEEDS FIX':
+        return const Color(0xFF991B1B);
+      case 'FIX & EXIT':
+        return const Color(0xFF6B21A8);
+      case 'EXPIRED':
+        return const Color(0xFF4B5563);
+      default:
+        return const Color(0xFF075985);
+    }
+  }
+
+  String _formatStatus(String rawStatus, Map<String, dynamic> order) {
+    String e = (order['exitStatus'] ?? '').toString().toUpperCase();
+    bool wasEverRejected = order['wasEverRejected'] == true;
+
+    if (e == 'COMPLETED' || e == 'EXITED' || e == 'APPROVED') {
+      return wasEverRejected ? 'Fix & Exit' : 'Clear Exit';
+    }
+    if (e == 'REJECTED') return 'Needs Fix';
+    if (e == 'EXPIRED' || e == 'EXPIRED_BY_SYSTEM') return 'Expired';
+    return e.isNotEmpty ? e : 'Current Order';
+  }
+
+// 📡 Custom Stream based on Global vs In-Store
+  Stream<QuerySnapshot> _getOrdersStream() {
+    // 🚀 SAFE QUERY: No extra filters to avoid Firebase Composite Index Errors
+    return FirebaseFirestore.instance
+        .collection('orders')
+        .where('userId', isEqualTo: userId)
+        .orderBy('timestamp', descending: true)
+        .limit(50)
+        .snapshots();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F6F8),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        title: const Text('View Gate Pass & History',
-            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-        backgroundColor: const Color(0xFFC62828),
-        iconTheme: const IconThemeData(color: Colors.white),
+        title: Text(
+          isGlobal ? "All Orders History" : "Store Order History",
+          style: GoogleFonts.syne(
+              fontWeight: FontWeight.w800,
+              fontSize: 22,
+              color: const Color(0xFF111827)),
+        ),
+        backgroundColor: Colors.white,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Color(0xFF111827)),
+        centerTitle: false,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.sort),
-            onPressed: _cycleSort,
-          )
+          Container(
+            margin: const EdgeInsets.only(right: 8),
+            child: TextButton.icon(
+              onPressed: () => setState(() => _currentSortIndex =
+                  (_currentSortIndex + 1) % _sortModes.length),
+              icon: const Icon(Icons.sort_rounded,
+                  color: Color(0xFF111827), size: 16),
+              label: Text(_sortModes[_currentSortIndex],
+                  style: GoogleFonts.dmSans(
+                      color: const Color(0xFF111827),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12)),
+              style: TextButton.styleFrom(
+                  backgroundColor: const Color(0xFFF3F4F6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20))),
+            ),
+          ),
         ],
+        bottom: PreferredSize(
+            preferredSize: const Size.fromHeight(1),
+            child: Container(color: const Color(0xFFF3F4F6), height: 1)),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        // 🚀 SAAS INJECTION FIX: Ab customer ko wahi ki history dikhegi jis dukan me wo khada hai
-        stream: FirebaseFirestore.instance
-            .collection('orders')
-            .where('userId', isEqualTo: currentUserId)
-            .where('tenantId', isEqualTo: UserSession.tenantId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+      body: StreamBuilder<User?>(
+        stream: FirebaseAuth.instance.authStateChanges(),
+        builder: (context, authSnapshot) {
+          // ⏳ 1. Wait for Firebase to check memory (Fixes Web Refresh issue)
+          if (authSnapshot.connectionState == ConnectionState.waiting) {
             return const Center(
-                child: CircularProgressIndicator(color: Color(0xFFC62828)));
+                child: CircularProgressIndicator(color: Color(0xFF111827)));
           }
 
-          if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(
-              child: Text("No orders found in this store.",
-                  style: TextStyle(color: Colors.grey, fontSize: 16)),
+          // 🛑 2. If actually logged out, show a proper message
+          if (!authSnapshot.hasData || authSnapshot.data == null) {
+            return Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.lock_outline, size: 50, color: Colors.grey),
+                  const SizedBox(height: 16),
+                  Text("Please log in to view history.",
+                      style: GoogleFonts.syne(
+                          fontSize: 18, fontWeight: FontWeight.bold)),
+                ],
+              ),
             );
           }
 
-          var docs = snapshot.data!.docs;
+          // ✅ 3. User confirmed! Now fetch their orders dynamically.
+          final liveUserId = authSnapshot.data!.uid;
 
-          // Sorting Logic
-          docs.sort((a, b) {
-            var dataA = a.data() as Map<String, dynamic>;
-            var dataB = b.data() as Map<String, dynamic>;
+          return StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('orders')
+                .where('userId', isEqualTo: liveUserId)
+                .orderBy('timestamp', descending: true)
+                .limit(50)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(
+                    child: CircularProgressIndicator(color: Color(0xFF111827)));
+              }
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty)
+                return _buildEmptyState();
 
-            if (_currentSort == SortType.dateLatest) {
-              Timestamp? tA = dataA['createdAt'] as Timestamp?;
-              Timestamp? tB = dataB['createdAt'] as Timestamp?;
-              return (tB ?? Timestamp.now()).compareTo(tA ?? Timestamp.now());
-            } else if (_currentSort == SortType.pendingFirst) {
-              return (dataA['status'] == 'PENDING' ? 0 : 1)
-                  .compareTo(dataB['status'] == 'PENDING' ? 0 : 1);
-            } else if (_currentSort == SortType.completedFirst) {
-              return (dataA['status'] == 'COMPLETED' ? 0 : 1)
-                  .compareTo(dataB['status'] == 'COMPLETED' ? 0 : 1);
-            } else if (_currentSort == SortType.amountDesc) {
-              double amtA = (dataA['totalAmount'] ?? 0).toDouble();
-              double amtB = (dataB['totalAmount'] ?? 0).toDouble();
-              return amtB.compareTo(amtA);
-            } else {
-              double amtA = (dataA['totalAmount'] ?? 0).toDouble();
-              double amtB = (dataB['totalAmount'] ?? 0).toDouble();
-              return amtA.compareTo(amtB);
-            }
-          });
+              List<QueryDocumentSnapshot> allDocs = snapshot.data!.docs;
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: docs.length,
-            itemBuilder: (context, index) {
-              var data = docs[index].data() as Map<String, dynamic>;
-              String orderId = docs[index].id;
-              double amount = (data['totalAmount'] ?? 0).toDouble();
-              bool isBlackBox = data['isBlackBoxCorrupted'] == true;
-
-              // Date Fallback Logic
-              Timestamp? timestamp = data['timestamp'] as Timestamp? ??
-                  data['createdAt'] as Timestamp?;
-              String dateStr = timestamp != null
-                  ? DateFormat('dd MMM yyyy, hh:mm a')
-                      .format(timestamp.toDate())
-                  : 'Unknown Date';
-
-              // 🚀 SMART STATUS PILL ENGINE
-              String exitStatus =
-                  (data['exitStatus'] ?? '').toString().toUpperCase();
-              String payStatus =
-                  (data['paymentStatus'] ?? '').toString().toUpperCase();
-              String rawStatus =
-                  (data['status'] ?? '').toString().toUpperCase();
-
-              bool isFixed = data['wasEverRejected'] == true ||
-                  (data['gatePassVersion'] != null &&
-                      data['gatePassVersion'] > 1) ||
-                  rawStatus == 'SUPERSEDED';
-
-              String pillText = 'UNKNOWN';
-              Color pillColor = Colors.grey;
-              Color iconBgColor = Colors.grey.shade200;
-              IconData mainIcon = Icons.help_outline;
-
-              if (exitStatus == 'REJECTED') {
-                pillText = 'EXIT STOPPED';
-                pillColor = Colors.red;
-                iconBgColor = Colors.red.shade100;
-                mainIcon = Icons.error_outline;
-              } else if (exitStatus == 'COMPLETED' ||
-                  exitStatus == 'EXITED' ||
-                  exitStatus == 'APPROVED') {
-                if (isFixed || isBlackBox) {
-                  pillText = 'FIXED & EXITED';
-                  pillColor = const Color(0xFF00BFA5); // Teal Accent
-                  iconBgColor = const Color(0xFFE0F2F1);
-                  mainIcon = Icons.build;
-                } else {
-                  pillText = 'CLEAR EXIT';
-                  pillColor = Colors.green;
-                  iconBgColor = Colors.green.shade100;
-                  mainIcon = Icons.check_circle;
-                }
-              } else if (payStatus == 'PAID' &&
-                  (exitStatus == 'PENDING' || exitStatus == 'READY_FOR_EXIT')) {
-                pillText = 'NEW GATE PASS GENERATED';
-                pillColor = Colors.blue;
-                iconBgColor = Colors.blue.shade100;
-                mainIcon = Icons.qr_code_scanner;
-              } else if (payStatus == 'PENDING') {
-                pillText = 'PAYMENT PENDING';
-                pillColor = Colors.orange;
-                iconBgColor = Colors.orange.shade100;
-                mainIcon = Icons.hourglass_empty;
-              } else if (exitStatus == 'EXPIRED' || rawStatus == 'EXPIRED') {
-                pillText = 'GATE PASS EXPIRED';
-                pillColor = Colors.purpleAccent;
-                iconBgColor = Colors.purpleAccent.shade100;
-                mainIcon = Icons.timer_off;
+              // 🚀 LOCAL FILTER: Store mode me sirf current store ke orders dikhao (Firebase Index Error Bypass)
+              if (!isGlobal) {
+                allDocs = allDocs.where((doc) {
+                  var data = doc.data() as Map<String, dynamic>;
+                  return data['storeId'] == UserSession.storeId;
+                }).toList();
               }
 
-              void handleTap() {
-                if (payStatus == 'PENDING' && data['paymentMode'] == 'CASH') {
-                  Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => PaymentQRScreen(
-                              orderId: orderId, amount: amount)));
+              if (allDocs.isEmpty) return _buildEmptyState();
+
+              _sortOrders(allDocs);
+
+              // 🚀 SPLIT LOGIC: SAB KUCH DIKHEGA YAHAN
+              List<QueryDocumentSnapshot> activeDocs = [];
+              List<QueryDocumentSnapshot> pastDocs = [];
+
+              for (var doc in allDocs) {
+                var data = doc.data() as Map<String, dynamic>;
+                String e = (data['exitStatus'] ?? '').toString().toUpperCase();
+                String s = (data['status'] ?? '').toString().toUpperCase();
+                bool isConsumed = data['qrConsumed'] == true;
+
+                bool isRejected = e == 'REJECTED';
+                bool isExpired = e == 'EXPIRED' ||
+                    e == 'EXPIRED_BY_SYSTEM' ||
+                    s == 'EXPIRED';
+                bool isDeleted = s == 'DELETED' || s == 'CANCELLED';
+                bool isCompleted =
+                    e == 'EXITED' || e == 'APPROVED' || e == 'COMPLETED';
+
+                // 🚀 ULTIMATE ACTIVE RULE: 'Already Used' Active me nahi dikhega
+                bool isActive = !isExpired &&
+                    !isDeleted &&
+                    (isRejected || (!isCompleted && !isConsumed));
+
+                if (isActive) {
+                  activeDocs.add(doc);
                 } else {
-                  Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => OrderDetailScreen(orderId: orderId)));
+                  pastDocs.add(doc);
                 }
               }
 
-              // 🚀 VIP EXACT MOCKUP UI
-              return Card(
-                margin: const EdgeInsets.only(bottom: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16)),
-                elevation: 1,
-                color: isBlackBox ? const Color(0xFF1E1E1E) : Colors.white,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Left Icon Avatar
-                      Container(
-                        width: 54,
-                        height: 54,
-                        decoration: BoxDecoration(
-                          color: isBlackBox
-                              ? pillColor.withOpacity(0.15)
-                              : iconBgColor,
-                          shape: BoxShape.circle,
-                        ),
-                        child: Icon(mainIcon, color: pillColor, size: 26),
+              return ListView(
+                padding: const EdgeInsets.only(top: 10, bottom: 30),
+                children: [
+                  if (activeDocs.isNotEmpty) ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 10),
+                      child: Text("Active Gate Passes",
+                          style: GoogleFonts.syne(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF111827))),
+                    ),
+                    ...activeDocs.map((doc) => _buildActiveOrderCard(doc)),
+                    const SizedBox(height: 20),
+                  ],
+                  if (pastDocs.isNotEmpty) ...[
+                    if (activeDocs.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 20, vertical: 10),
+                        child: Text("Past History",
+                            style: GoogleFonts.syne(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w800,
+                                color: const Color(0xFF111827))),
                       ),
-                      const SizedBox(width: 16),
-                      // Middle Detail Content
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "₹${amount.toStringAsFixed(2)}",
-                              style: TextStyle(
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold,
-                                fontFamily: 'DejaVuSansMono',
-                                color:
-                                    isBlackBox ? Colors.white : Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              dateStr,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: isBlackBox
-                                    ? Colors.white54
-                                    : Colors.grey.shade500,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            // THE COLOURED STATUS PILL
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 8, vertical: 4),
-                              decoration: BoxDecoration(
-                                color: isBlackBox
-                                    ? pillColor.withOpacity(0.1)
-                                    : Colors.white,
-                                border: Border.all(
-                                    color: pillColor.withOpacity(0.5)),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    pillText,
-                                    style: TextStyle(
-                                      color: pillColor,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                  if (isBlackBox) ...[
-                                    const SizedBox(width: 4),
-                                    Icon(Icons.build,
-                                        color: pillColor, size: 10),
-                                  ]
-                                ],
-                              ),
-                            ),
-                            // Black Box AI Log Alert
-                            if (isBlackBox &&
-                                data['revisionHistory'] != null) ...[
-                              const SizedBox(height: 10),
-                              Row(
-                                children: [
-                                  const Icon(Icons.warning_amber_rounded,
-                                      color: Colors.orange, size: 14),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    "AI Record: ${(data['revisionHistory'] as List).length} Attempt(s) Logged",
-                                    style: const TextStyle(
-                                      color: Colors.orange,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              )
-                            ],
-                          ],
-                        ),
-                      ),
-                      // Right Options Menu
-                      PopupMenuButton<String>(
-                        padding: EdgeInsets.zero,
-                        icon: Icon(Icons.more_vert,
-                            color: isBlackBox ? Colors.white54 : Colors.grey),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15)),
-                        onSelected: (value) {
-                          if (value == 'view') handleTap();
-                        },
-                        itemBuilder: (BuildContext context) =>
-                            <PopupMenuEntry<String>>[
-                          const PopupMenuItem<String>(
-                            value: 'view',
-                            child: Row(
-                              children: [
-                                Icon(Icons.visibility,
-                                    size: 20, color: Colors.blueAccent),
-                                SizedBox(width: 10),
-                                Text('View Details',
-                                    style:
-                                        TextStyle(fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
+                    isGlobal
+                        ? _buildGlobalGroupedList(pastDocs)
+                        : _buildFlatOrderList(pastDocs),
+                  ],
+                ],
               );
             },
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildActiveOrderCard(QueryDocumentSnapshot doc) {
+    var order = doc.data() as Map<String, dynamic>;
+    final String orderId = doc.id;
+    final String shortId = orderId.length > 6
+        ? orderId.substring(orderId.length - 6).toUpperCase()
+        : orderId;
+    final double amount =
+        double.tryParse(order['totalAmount']?.toString() ?? '0') ?? 0.0;
+    final String exitStatus =
+        (order['exitStatus'] ?? '').toString().toUpperCase();
+    final String payStatus =
+        (order['paymentStatus'] ?? '').toString().toUpperCase();
+
+    String statusText = "Payment Pending";
+    Color statusColor = const Color(0xFFF59E0B);
+    Color statusBg = const Color(0xFFFEF3C7);
+    IconData icon = Icons.hourglass_top_rounded;
+
+    if (exitStatus == 'REJECTED') {
+      statusText = "Needs Fix";
+      statusColor = const Color(0xFFDC2626);
+      statusBg = const Color(0xFFFEE2E2);
+      icon = Icons.error_outline_rounded;
+    } else if (exitStatus == 'READY_FOR_EXIT' || payStatus == 'PAID') {
+      statusText = "Ready for Scan";
+      statusColor = const Color(0xFF16A34A);
+      statusBg = const Color(0xFFDCFCE7);
+      icon = Icons.verified_user_rounded;
+    }
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => OrderDetailScreen(orderId: orderId))),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12, left: 20, right: 20),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: statusColor.withOpacity(0.4), width: 1.5),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                  color: statusColor.withOpacity(0.08),
+                  blurRadius: 8,
+                  offset: const Offset(0, 4))
+            ]),
+        child: Row(
+          children: [
+            Container(
+                padding: const EdgeInsets.all(10),
+                decoration:
+                    BoxDecoration(color: statusBg, shape: BoxShape.circle),
+                child: Icon(icon, color: statusColor, size: 24)),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Order #$shortId",
+                        style: GoogleFonts.syne(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: const Color(0xFF111827))),
+                    const SizedBox(height: 4),
+                    Text("₹${amount.toStringAsFixed(0)} • Tap to view",
+                        style: GoogleFonts.dmSans(
+                            fontSize: 12, color: const Color(0xFF6B7280))),
+                  ]),
+            ),
+            Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                    color: statusBg, borderRadius: BorderRadius.circular(100)),
+                child: Text(statusText,
+                    style: GoogleFonts.dmSans(
+                        color: statusColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700))),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlobalGroupedList(List<QueryDocumentSnapshot> docs) {
+    Map<String, List<Map<String, dynamic>>> groupedOrders = {};
+    for (var doc in docs) {
+      Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+      data['orderId'] = doc.id;
+      // 🚀 FIX: Show actual branch code instead of default_tenant
+      String storeName = data['storeName'] ??
+          data['branchCode'] ??
+          data['storeId'] ??
+          'Unknown Store';
+      if (!groupedOrders.containsKey(storeName)) groupedOrders[storeName] = [];
+      groupedOrders[storeName]!.add(data);
+    }
+
+    return Column(
+      children: groupedOrders.keys.map((storeName) {
+        List<Map<String, dynamic>> storeOrders = groupedOrders[storeName]!;
+        return Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: true,
+            tilePadding:
+                const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+            leading: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFF3F4F6),
+                    borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.storefront_rounded,
+                    color: Color(0xFF4B5563), size: 22)),
+            title: Text(storeName,
+                style: GoogleFonts.dmSans(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    color: const Color(0xFF111827))),
+            subtitle: Text("${storeOrders.length} Transactions",
+                style: GoogleFonts.dmSans(
+                    fontSize: 13, color: const Color(0xFF6B7280))),
+            children: storeOrders
+                .map((order) => _buildMinimalistOrderTile(order))
+                .toList(),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildFlatOrderList(List<QueryDocumentSnapshot> docs) {
+    List<Map<String, dynamic>> orders = docs.map((doc) {
+      var data = doc.data() as Map<String, dynamic>;
+      data['orderId'] = doc.id;
+      return data;
+    }).toList();
+    return Column(
+        children:
+            orders.map((order) => _buildMinimalistOrderTile(order)).toList());
+  }
+
+  Widget _buildMinimalistOrderTile(Map<String, dynamic> order) {
+    final String orderId = order['orderId'] ?? '';
+    final String shortId = orderId.length > 6
+        ? orderId.substring(orderId.length - 6).toUpperCase()
+        : orderId;
+    final double amount =
+        double.tryParse(order['totalAmount']?.toString() ?? '0') ?? 0.0;
+    final List<dynamic> items = order['items'] ?? [];
+    final String status = _formatStatus(
+        (order['exitStatus'] ?? order['status'] ?? 'PENDING'), order);
+    final dt = (order['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+
+    return InkWell(
+      onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+              builder: (_) => OrderDetailScreen(orderId: orderId))),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: const BoxDecoration(
+            border:
+                Border(bottom: BorderSide(color: Color(0xFFF3F4F6), width: 1))),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                    color: const Color(0xFFF8FAFC),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFE2E8F0))),
+                child: const Icon(Icons.receipt_long_rounded,
+                    color: Color(0xFF64748B), size: 24)),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text("Order #$shortId",
+                          style: GoogleFonts.dmSans(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                              color: const Color(0xFF111827))),
+                      Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 4),
+                          decoration: BoxDecoration(
+                              color: _getStatusBgColor(status),
+                              borderRadius: BorderRadius.circular(20)),
+                          child: Text(status,
+                              style: GoogleFonts.dmSans(
+                                  color: _getStatusTextColor(status),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.3))),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      const Icon(Icons.inventory_2_outlined,
+                          size: 12, color: Color(0xFF9CA3AF)),
+                      const SizedBox(width: 4),
+                      Text("${items.length} items",
+                          style: GoogleFonts.dmSans(
+                              fontSize: 12, color: const Color(0xFF6B7280))),
+                      const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 6),
+                          child: Text("•",
+                              style: TextStyle(color: Color(0xFFD1D5DB)))),
+                      const Icon(Icons.access_time_rounded,
+                          size: 12, color: Color(0xFF9CA3AF)),
+                      const SizedBox(width: 4),
+                      Text(DateFormat('hh:mm a').format(dt),
+                          style: GoogleFonts.dmSans(
+                              fontSize: 12, color: const Color(0xFF6B7280))),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text("₹${amount.toStringAsFixed(0)}",
+                      style: GoogleFonts.syne(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                          color: const Color(0xFF111827))),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Container(
+              padding: const EdgeInsets.all(24),
+              decoration: const BoxDecoration(
+                  color: Color(0xFFF9FAFB), shape: BoxShape.circle),
+              child: const Icon(Icons.receipt_long_rounded,
+                  size: 60, color: Color(0xFFD1D5DB))),
+          const SizedBox(height: 20),
+          Text("No orders found",
+              style: GoogleFonts.syne(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 20,
+                  color: const Color(0xFF111827))),
+          const SizedBox(height: 8),
+          Text("Your transaction history will appear here.",
+              style: GoogleFonts.dmSans(
+                  color: const Color(0xFF6B7280), fontSize: 14)),
+        ],
       ),
     );
   }

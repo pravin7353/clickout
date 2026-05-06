@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart'; // 🚀 Added for Device Orientation
 import 'package:provider/provider.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,7 +11,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'firebase_options.dart';
 
 import 'services/cart/cart_service.dart';
-import 'services/session_service.dart'; // 🚀 ADDED THIS LINE
+import 'services/session_service.dart';
 import 'theme/app_theme.dart';
 import 'screens/splash_screen.dart';
 import 'screens/order_history_screen.dart';
@@ -40,6 +41,12 @@ void handleDeepLink(dynamic data) {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 🚀 FIX 1: Lock the app to Portrait Mode only
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown, // Optional, can remove if only want up
+  ]);
 
   try {
     // 🚀 SAAS FIX: Web requires options for Firebase Init
@@ -108,8 +115,7 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(
-            create: (_) => SessionService()), // 🚀 ADDED THIS LINE
+        ChangeNotifierProvider(create: (_) => SessionService()),
         ChangeNotifierProvider(create: (_) => CartService()),
       ],
       child: const MyApp(),

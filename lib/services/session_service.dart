@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart'; // 🚀 NAYA IMPORT
@@ -104,6 +106,16 @@ class SessionService extends ChangeNotifier {
         await prefs.setString('saved_storeId', bCode);
         await prefs.setString('store_session_expiry',
             DateTime.now().add(const Duration(hours: 3)).toIso8601String());
+
+        // 🚀🔥 THE FINAL FIX: Yahan Firebase ko update karo taaki Admin Panel ko pata chale!
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+          FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+            'lastVisit': FieldValue.serverTimestamp(),
+            'branchCode': bCode,
+          }, SetOptions(merge: true)).catchError(
+              (e) => debugPrint("🚨 Firebase Update Failed: $e"));
+        }
 
         notifyListeners(); // 🚀 MAGIC: UI WILL INSTANTLY TURN RED!
         debugPrint("✅ Checked into Store: $bCode (Tenant: $tId)");
